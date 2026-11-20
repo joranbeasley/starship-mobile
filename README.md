@@ -1,5 +1,7 @@
 # Starship Drift
 
+**Play it:** https://joranbeasley.github.io/starship-mobile/ (open on your phone)
+
 A spaceship flying game for phones, steered by tilting the device. It is a single `index.html` with no build step or dependencies.
 
 ## How to play
