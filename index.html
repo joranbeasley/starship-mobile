@@ -67,6 +67,13 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 .icon-btn:focus-visible, .btn:focus-visible, .seg label:has(input:focus-visible), .toggle:has(input:focus-visible) { outline: 2px solid var(--ion); outline-offset: 2px; }
 .icon-btn svg { width: 18px; height: 18px; }
 .speed.warn { color: var(--hazard); }
+.powers { display: flex; flex-wrap: wrap; gap: 4px; max-width: 60vw; }
+.chip {
+  position: relative; overflow: hidden; padding: 3px 7px 5px; border-radius: 6px;
+  border: 1px solid var(--c); color: var(--c); background: rgba(10, 14, 32, 0.55);
+  font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.chip i { position: absolute; left: 0; bottom: 0; width: 100%; height: 2px; background: var(--c); transform-origin: left; }
 .speed { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; letter-spacing: 0.1em; }
 
 /* Panels */
@@ -181,6 +188,7 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
     <span class="label">Score</span>
     <span class="score" id="score">0</span>
     <span class="mult" id="mult"></span>
+    <div class="powers" id="powers"></div>
   </div>
   <div class="right">
     <div class="btns">
@@ -265,6 +273,7 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
       <dt>Distance</dt><dd id="finalDist">0 km</dd>
       <dt>Rings threaded</dt><dd id="finalRings">0</dd>
       <dt>Asteroids cleared</dt><dd id="finalKills">0</dd>
+      <dt>Close calls</dt><dd id="finalNear">0</dd>
       <dt>Best</dt><dd id="finalBest">0</dd>
     </dl>
     <div class="newbest" id="newBest" hidden>New personal best</div>
@@ -391,8 +400,9 @@ function reset() {
   Object.assign(G, {
     t: 0, dist: 0, bonus: 0, speed: 16, hull: 3, inv: 0, combo: 0, shake: 0, red: 0,
     ents: [], bolts: [], parts: [], pops: [], fireCd: 0, ring: null, ringWait: 1.2,
-    rings: 0, kills: 0, gems: 0,
-    timers: { gem: 1.5, repair: 22, rock: 0.8 }
+    rings: 0, kills: 0, gems: 0, near: 0, nearStreak: 0, nearT: 0, skimT: 0, lastNear: null,
+    pw: { shield: 0, magnet: 0, double: 0, blaster: 0 }, event: null, eventT: rand(30, 40), banner: null, nextMile: 500, birdsSeen: false,
+    timers: { gem: 1.5, repair: 22, rock: 0.8, power: rand(8, 12), birds: rand(10, 14), meteor: 0 }
   });
   G.mode = settings.mode;
   resize();
@@ -474,7 +484,12 @@ const sfx = {
   boom: () => noise(0.35, 0.35, 1800),
   hit: () => { noise(0.5, 0.6, 1100); tone(190, 40, 0.45, 'sawtooth', 0.12); },
   repair: () => [392, 523, 784].forEach((f, i) => tone(f, f, 0.12, 'sine', 0.1, i * 0.07)),
-  over: () => { noise(1.2, 0.5, 900); tone(220, 30, 1.2, 'sawtooth', 0.1); }
+  over: () => { noise(1.2, 0.5, 900); tone(220, 30, 1.2, 'sawtooth', 0.1); },
+  whoosh: () => noise(0.22, 0.22, 4200),
+  power: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, f * 1.02, 0.1, 'square', 0.05, i * 0.05)),
+  alarm: () => { tone(330, 660, 0.25, 'sawtooth', 0.06); tone(330, 660, 0.25, 'sawtooth', 0.06, 0.3); },
+  shieldPop: () => { tone(1200, 200, 0.3, 'triangle', 0.12); noise(0.2, 0.2, 2500); },
+  coo: () => { tone(700, 420, 0.12, 'sine', 0.08); noise(0.15, 0.12, 3000); }
 };
 function humStart() {
   if (!AC || hum) return;
@@ -703,12 +718,12 @@ function maintainWorld(dt) {
   }
   if (isTunnel()) {
     G.ents = G.ents.filter(e => e === G.ring || e.p.z > cam.p.z + 0.4);
-    if ((G.timers.rock -= dt) <= 0) { spawnTunnelRock(); G.timers.rock = Math.max(0.13, 0.62 - (G.t || 0) * 0.005) * rand(0.6, 1.4); }
+    if ((G.timers.rock -= dt) <= 0) { spawnTunnelRock(); G.timers.rock = Math.max(0.13, 0.62 - (G.t || 0) * 0.005) * rand(0.6, 1.4) * (G.event ? 0.4 : 1); }
     return;
   }
   const keep = 150;
   G.ents = G.ents.filter(e => e === G.ring || len(sub(e.p, ship.p)) < keep);
-  const target = Math.min(120, 55 + (G.t || 0) * 0.8);
+  const target = Math.min(120, 55 + (G.t || 0) * 0.8) + (G.event ? 50 : 0);
   let rocks = 0;
   for (const e of G.ents) if (e.k === 'rock') rocks++;
   for (let i = 0; rocks + i < target && i < 4; i++) spawnRock(rand(70, 115), 1.25);
@@ -727,9 +742,13 @@ function explode(e) {
   sfx.boom();
 }
 let shipSX = 0, shipSY = 0;
-function pop(text, color) { G.pops.push({ text, color, x: shipSX, y: shipSY - 44, life: 1 }); }
+function pop(text, color) {
+  // stack above any pop-ups that appeared a moment ago so they don't overprint
+  const fresh = G.pops.filter(q => q.life > 0.75).length;
+  G.pops.push({ text, color, x: shipSX, y: shipSY - 44 - fresh * 22, life: 1 });
+}
 function addScore(n, color = '#ffb547') {
-  const m = 1 + G.combo;
+  const m = (1 + G.combo) * (G.pw && G.pw.double > 0 ? 2 : 1);
   G.bonus += n * m;
   pop('+' + n * m, color);
 }
@@ -740,10 +759,17 @@ function fire() {
   for (const side of [-1, 1]) {
     const p = addS(addS(ship.p, b.r, side * 0.32), b.u, -0.05);
     G.bolts.push({ k: 'bolt', p, prev: p, dir: b.f, v: G.speed + 80, life: 1.4 });
+    if (G.pw.blaster > 0) G.bolts.push({ k: 'bolt', p, prev: p, dir: norm(addS(b.f, b.r, side * 0.07)), v: G.speed + 80, life: 1.4 });
   }
   sfx.fire();
 }
 function damage() {
+  if (G.pw.shield > 0) {
+    G.pw.shield = 0; G.inv = 1.2; G.shake = reduceMotion ? 0 : 8;
+    pop('Shield absorbed it', '#5ce1ff'); sfx.shieldPop(); buzz(60);
+    burst(ship.p, '#5ce1ff', 18, 5, 0.07);
+    return;
+  }
   G.hull--; G.inv = 1.5; G.shake = reduceMotion ? 0 : 16; G.red = 0.5;
   if (G.combo > 0) pop('Combo lost', '#ff4d6d');
   G.combo = 0;
@@ -834,11 +860,18 @@ function update(dt) {
   if ((T.repair -= dt) <= 0) { if (G.hull < 3) spawnRepair(); T.repair = rand(18, 26); }
 
   G.fireCd -= dt;
-  if (!isPaper() && (input.firing || input.keys.f) && G.fireCd <= 0) { fire(); G.fireCd = 0.16; }
+  if (!isPaper() && (input.firing || input.keys.f) && G.fireCd <= 0) { fire(); G.fireCd = G.pw.blaster > 0 ? 0.09 : 0.16; }
 
   for (const e of G.ents) {
     if (e.k === 'rock') { e.p = addS(e.p, e.v, dt); e.rot += e.vr * dt; if (e.flash > 0) e.flash -= dt; }
-    else { e.spin += dt * 3; if (e.state) e.t += dt; }
+    else {
+      e.spin += dt * 3; if (e.state) e.t += dt;
+      if (e.k === 'bird') { e.p = addS(e.p, e.v, dt); if ((e.life -= dt) <= 0) e.dead = true; }
+      if (e.k === 'gem' && G.pw.magnet > 0) {
+        const to = sub(ship.p, e.p), dl = len(to);
+        if (dl < 30) e.p = addS(e.p, to, Math.min(1, (G.speed + 30) * dt / dl));
+      }
+    }
     if (e.dead || e.k === 'ring') continue;
     const d = segDist(ship.prev, ship.p, e.p);
     if (e.k === 'rock') {
@@ -847,9 +880,17 @@ function update(dt) {
       if (d < e.r + 0.85) { e.dead = true; G.gems++; addScore(10); burst(e.p, '#ffb547', 8, 2.5, 0.06); sfx.gem(); }
     } else if (e.k === 'repair') {
       if (d < e.r + 0.85) { e.dead = true; G.hull = Math.min(3, G.hull + 1); pop('Hull repaired', '#6dffb0'); sfx.repair(); burst(e.p, '#6dffb0', 12, 3, 0.07); }
+    } else if (e.k === 'power') {
+      if (d < e.r + 0.95) { e.dead = true; activatePower(e.type); burst(e.p, POWERS[e.type].c, 14, 3, 0.07); }
+    } else if (e.k === 'bird') {
+      if (d < 0.9) {
+        e.dead = true; G.speed = Math.max(5, G.speed - 3);
+        pop('Pigeon!', '#e8ecf7'); sfx.coo(); buzz(20);
+        burst(e.p, '#d9d4cc', 10, 2.5, 0.07); burst(e.p, '#6b6276', 6, 2, 0.06);
+      }
     }
   }
-  if (G.state === 'playing') checkRing();
+  if (G.state === 'playing') { checkRing(); updateFun(dt); }
 
   for (const b of G.bolts) {
     b.prev = b.p; b.p = addS(b.p, b.dir, b.v * dt); b.life -= dt;
@@ -861,6 +902,7 @@ function update(dt) {
   }
 
   tickEffects(dt);
+  tickBanner(dt);
   G.ents = G.ents.filter(e => !e.dead && !(e.k === 'ring' && e.state && e.t > 1.2));
   G.bolts = G.bolts.filter(b => !b.dead);
 
@@ -898,6 +940,7 @@ function ambient(dt) {
   }
   for (const e of G.ents) { if (e.k === 'rock') { e.p = addS(e.p, e.v, dt); e.rot += e.vr * dt; } else e.spin += dt * 3; }
   tickEffects(dt);
+  tickBanner(dt);
   G.shake *= Math.exp(-dt * 7);
   if (G.red > 0) G.red -= dt;
 }
@@ -1205,6 +1248,194 @@ function drawPaperPlane(u) {
   }
 }
 
+// ---------- extras: close calls, power-ups, events, milestones ----------
+const POWERS = {
+  shield: { c: '#5ce1ff', t: 0, name: 'Shield' },        // lasts until it absorbs a hit
+  magnet: { c: '#ff7aa2', t: 10, name: 'Magnet' },
+  double: { c: '#ffd166', t: 10, name: '×2 score' },
+  blaster: { c: '#6dffb0', t: 8, name: 'Blaster' }
+};
+function banner(text, sub = '', color = '#ffb547') { G.banner = { text, sub, color, life: 2.4, max: 2.4 }; }
+
+function nearMiss(label) {
+  G.nearStreak = Math.min(G.nearStreak + 1, 5);
+  G.nearT = 3;
+  G.near++;
+  const pts = 15 * G.nearStreak * (G.pw.double > 0 ? 2 : 1);
+  G.bonus += pts;
+  pop(`${label}${G.nearStreak > 1 ? ' ×' + G.nearStreak : ''} +${pts}`, '#ff9de2');
+  sfx.whoosh(); buzz(12);
+}
+// rocks that slip past just outside the hit radius
+function checkRockNearMisses() {
+  const f = shipBasis().f;
+  for (const e of G.ents) {
+    if (e.k !== 'rock' || e.passed || e.dead) continue;
+    const rel = sub(e.p, ship.p), along = dot(rel, f);
+    if (along > 0) continue;
+    e.passed = true;
+    const lat = len(addS(rel, f, -along)), hit = e.r * 0.85 + SHIP_R;
+    if (lat >= hit && lat < hit + 1.6 && along > -e.r - 3) nearMiss('Close call');
+  }
+}
+// paper plane: skimming a wall, a roof or the street
+function checkPaperNearMiss(dt) {
+  G.skimT -= dt;
+  const b = buildingAt(ship.p, 2.2);
+  if (b && b !== G.lastNear) { G.lastNear = b; nearMiss('Close shave'); }
+  if (!b && G.lastNear && !buildingAt(ship.p, 6)) G.lastNear = null;
+  if (ship.p.y < 2.5 && G.skimT <= 0) { G.skimT = 2; nearMiss('Street skim'); }
+}
+
+function spawnPower() {
+  const types = isPaper() ? ['shield', 'magnet', 'double'] : ['shield', 'magnet', 'double', 'blaster'];
+  const type = types[(Math.random() * types.length) | 0];
+  let p;
+  if (isPaper()) { p = streetAhead(rand(45, 60)).p; p.y = paperAlt(); }
+  else if (isTunnel()) p = boxPoint(0.7);
+  else p = aheadPoint(55, 75, 0.5);
+  G.ents.push({ k: 'power', type, p, r: 0.65, spin: 0 });
+}
+function activatePower(type) {
+  G.pw[type] = type === 'shield' ? 1 : POWERS[type].t;
+  pop(POWERS[type].name, POWERS[type].c);
+  sfx.power(); buzz(30);
+}
+
+// space modes: meteor shower
+function startShower() {
+  G.event = { t: 10, hull: G.hull };
+  banner('Meteor shower', 'Survive 10 seconds', '#ff4d6d');
+  sfx.alarm(); buzz([60, 60, 60]);
+}
+function endShower() {
+  if (G.hull >= G.event.hull) { G.bonus += 150; banner('Shower survived', '+150', '#6dffb0'); sfx.ring(); }
+  else banner('Shower over', '', '#c3c9e3');
+  G.event = null; G.eventT = rand(40, 55);
+}
+// open space: some meteors streak straight at you
+function spawnMeteor() {
+  const p = aheadPoint(70, 95, 1.0);
+  const target = addS(ship.p, shipBasis().f, rand(10, 30));
+  const v = norm(sub(target, p));
+  makeRock(p, rand(0.7, 1.4), v3(v.x * 22, v.y * 22, v.z * 22));
+  const e = G.ents[G.ents.length - 1];
+  if (e && e.k === 'rock') e.meteor = true;
+}
+
+// paper plane: pigeons cross the street in a loose flock
+function spawnBirds() {
+  const { p, along } = streetAhead(rand(50, 65));
+  const cross = v3(along.z, 0, -along.x), dir = Math.random() < 0.5 ? 1 : -1, y = clamp(ship.p.y + rand(-2, 2), 3, 60);
+  const n = 6 + (Math.random() * 5 | 0);
+  for (let i = 0; i < n; i++) {
+    const off = -9 - i * 1.4 + rand(-0.6, 0.6);
+    G.ents.push({ k: 'bird', p: v3(p.x + cross.x * off * dir + along.x * rand(-2, 2), y + rand(-1.5, 1.5), p.z + cross.z * off * dir + along.z * rand(-2, 2)),
+      v: v3(cross.x * 6 * dir, rand(-0.3, 0.3), cross.z * 6 * dir), r: 0.35, spin: rand(0, 6), life: 12 });
+  }
+  if (!G.birdsSeen) { G.birdsSeen = true; banner('Pigeons', 'They slow you down', '#e8ecf7'); }
+}
+function fireworks() {
+  const cols = ['#ffd166', '#ff7aa2', '#5ce1ff', '#6dffb0', '#ffb547'];
+  for (let k = 0; k < 3; k++) {
+    const p = isPaper() ? addS(addS(ship.p, shipBasis().f, rand(70, 100)), v3(rand(-1, 1), 0, rand(-1, 1)), 30) : aheadPoint(70, 100, 0.6);
+    if (isPaper()) p.y = ship.p.y + rand(20, 40);
+    burst(p, cols[(Math.random() * cols.length) | 0], 36, 12, 0.45);
+  }
+  sfx.boom();
+}
+
+function updateFun(dt) {
+  const T = G.timers;
+  for (const k of ['magnet', 'double', 'blaster']) if (G.pw[k] > 0) G.pw[k] = Math.max(0, G.pw[k] - dt);
+  if ((T.power -= dt) <= 0) { spawnPower(); T.power = rand(13, 19); }
+  if (isPaper()) {
+    if ((T.birds -= dt) <= 0) { spawnBirds(); T.birds = rand(9, 15); }
+    checkPaperNearMiss(dt);
+  } else {
+    if (G.event) {
+      if ((G.event.t -= dt) <= 0) endShower();
+      else if (!isTunnel() && (T.meteor -= dt) <= 0) { spawnMeteor(); T.meteor = rand(0.35, 0.7); }
+    } else if ((G.eventT -= dt) <= 0) startShower();
+    checkRockNearMisses();
+  }
+  if (G.dist >= G.nextMile) {
+    G.bonus += 100;
+    banner(distLabel(), 'Milestone +100');
+    sfx.ring();
+    if (isPaper()) fireworks();
+    G.nextMile += isPaper() ? 250 : 500;
+  }
+  if (G.nearT > 0) G.nearT -= dt; else G.nearStreak = 0;
+}
+// the paper plane flies at real-world speeds, so show its distance in meters
+function distLabel() { return isPaper() ? `${Math.round(G.dist * 2).toLocaleString()} m` : `${Math.round(G.dist / 10)} km`; }
+function tickBanner(dt) { if (G.banner && (G.banner.life -= dt) <= 0) G.banner = null; }
+
+function drawPower(e) {
+  const q = proj(e.p);
+  if (!q) return;
+  const [x, y, s, z] = q, R = e.r * s, col = POWERS[e.type].c;
+  if (R < 0.8) return;
+  ctx.globalAlpha = fogAlpha(z);
+  const pulse = 1 + Math.sin(e.spin * 1.5) * 0.08;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, R * 2.6);
+  g.addColorStop(0, col + '88'); g.addColorStop(1, col + '00');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R * 2.6, 0, 6.283); ctx.fill();
+  ctx.fillStyle = 'rgba(10, 14, 32, 0.85)'; ctx.strokeStyle = col; ctx.lineWidth = Math.max(1.2, R * 0.12);
+  ctx.beginPath(); ctx.arc(x, y, R * pulse, 0, 6.283); ctx.fill(); ctx.stroke();
+  const r = R * 0.55;
+  ctx.lineWidth = Math.max(1.2, R * 0.13); ctx.fillStyle = col;
+  ctx.beginPath();
+  if (e.type === 'shield') {
+    for (let i = 0; i < 6; i++) { const a = i / 6 * 6.283 + e.spin * 0.3; ctx[i ? 'lineTo' : 'moveTo'](x + Math.cos(a) * r, y + Math.sin(a) * r); }
+    ctx.closePath(); ctx.stroke();
+  } else if (e.type === 'magnet') {
+    ctx.arc(x, y, r * 0.65, Math.PI, 0, true); ctx.moveTo(x - r * 0.65, y); ctx.lineTo(x - r * 0.65, y - r * 0.7);
+    ctx.moveTo(x + r * 0.65, y); ctx.lineTo(x + r * 0.65, y - r * 0.7); ctx.stroke();
+  } else if (e.type === 'double') {
+    ctx.font = `700 ${Math.max(8, R * 0.95)}px "Chakra Petch", system-ui, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('×2', x, y + R * 0.04); ctx.textBaseline = 'alphabetic';
+  } else {
+    for (const dx of [-0.5, 0, 0.5]) { ctx.moveTo(x + dx * r, y + r * 0.6); ctx.lineTo(x + dx * r * 1.4, y - r * 0.7); }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+function drawBird(e) {
+  const q = proj(e.p);
+  if (!q) return;
+  const [x, y, s, z] = q, w = Math.max(2, 0.55 * s), flap = Math.sin(e.spin * 4) * 0.45 * w;
+  ctx.globalAlpha = fogAlpha(z);
+  ctx.strokeStyle = '#2a2233'; ctx.lineWidth = Math.max(1.2, 0.09 * s); ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(x - w, y - flap); ctx.quadraticCurveTo(x - w * 0.4, y - flap * 0.2 - w * 0.15, x, y); ctx.quadraticCurveTo(x + w * 0.4, y - flap * 0.2 - w * 0.15, x + w, y - flap); ctx.stroke();
+  ctx.fillStyle = '#3a3044'; ctx.beginPath(); ctx.ellipse(x, y + w * 0.05, w * 0.16, w * 0.1, 0, 0, 6.283); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+function drawShieldBubble(u) {
+  if (!(G.pw && G.pw.shield > 0) || G.state !== 'playing') return;
+  const t = performance.now() / 1000;
+  const g = ctx.createRadialGradient(0, 0, u * 0.6, 0, 0, u * 1.25);
+  g.addColorStop(0, 'rgba(92, 225, 255, 0)'); g.addColorStop(0.85, 'rgba(92, 225, 255, 0.18)'); g.addColorStop(1, 'rgba(92, 225, 255, 0.5)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, u * 1.25, 0, 6.283); ctx.fill();
+  ctx.strokeStyle = `rgba(160, 240, 255, ${0.45 + 0.25 * Math.sin(t * 5)})`; ctx.lineWidth = Math.max(1, u * 0.03);
+  ctx.beginPath(); ctx.arc(0, 0, u * 1.25, 0, 6.283); ctx.stroke();
+}
+function drawBanner() {
+  const b = G.banner;
+  if (!b) return;
+  const a = clamp(b.life / 0.4, 0, 1) * clamp((b.max - b.life) / 0.15, 0, 1);
+  const y = H * 0.27, grow = 1 + clamp(0.15 - (b.max - b.life), 0, 0.15);
+  ctx.save();
+  ctx.globalAlpha = a; ctx.textAlign = 'center';
+  ctx.translate(W / 2, y); ctx.scale(grow, grow);
+  ctx.font = `700 ${Math.round(Math.min(36, W * 0.085))}px "Chakra Petch", system-ui, sans-serif`;
+  ctx.fillStyle = 'rgba(5, 6, 15, 0.55)'; ctx.fillText(b.text.toUpperCase(), 2, 2);
+  ctx.fillStyle = b.color; ctx.fillText(b.text.toUpperCase(), 0, 0);
+  if (b.sub) { ctx.font = '600 14px "IBM Plex Mono", ui-monospace, monospace'; ctx.fillStyle = '#e8ecf7'; ctx.fillText(b.sub, 0, 26); }
+  ctx.restore();
+}
+
 // ---------- rendering ----------
 function drawSky() {
   if (isPaper()) return drawCitySky();
@@ -1431,7 +1662,7 @@ function drawShip() {
   ctx.save();
   ctx.globalAlpha = blink ? 0.3 : 1;
   ctx.translate(sx, sy); ctx.rotate(bank); ctx.scale(1, 1 - Math.abs(pitch) * 0.6);
-  if (isPaper()) { drawPaperPlane(u); ctx.restore(); ctx.globalAlpha = 1; return; }
+  if (isPaper()) { drawPaperPlane(u); drawShieldBubble(u); ctx.restore(); ctx.globalAlpha = 1; return; }
 
   // engine glow (additive)
   ctx.globalCompositeOperation = 'lighter';
@@ -1497,12 +1728,13 @@ function drawShip() {
   ctx.beginPath(); ctx.arc(-0.97 * u, 0.28 * u, Math.max(1.5, 0.035 * u), 0, 6.283); ctx.fill();
   ctx.fillStyle = on ? '#6dffb0' : 'rgba(109, 255, 176, 0.3)';
   ctx.beginPath(); ctx.arc(0.97 * u, 0.28 * u, Math.max(1.5, 0.035 * u), 0, 6.283); ctx.fill();
+  drawShieldBubble(u);
 
   ctx.restore();
   ctx.globalAlpha = 1;
 }
 
-const drawers = { rock: drawRock, ring: drawRing, gem: drawGem, repair: drawRepair, bolt: drawBolt, part: drawPart, ship: drawShip, bld: drawBuilding, draft: drawDraft, lamp: drawLamp };
+const drawers = { rock: drawRock, ring: drawRing, gem: drawGem, repair: drawRepair, bolt: drawBolt, part: drawPart, ship: drawShip, bld: drawBuilding, draft: drawDraft, lamp: drawLamp, power: drawPower, bird: drawBird };
 
 // points to the active ring when it is off screen, with the distance to it
 function drawRingPointer() {
@@ -1576,6 +1808,8 @@ function render() {
   }
   ctx.globalAlpha = 1;
 
+  drawBanner();
+
   if (G.red > 0) {
     ctx.fillStyle = `rgba(255, 40, 70, ${clamp(G.red, 0, 0.5) * 0.6})`;
     ctx.fillRect(0, 0, W, H);
@@ -1585,7 +1819,7 @@ function render() {
 // ---------- HUD ----------
 const hudEls = { score: $('score'), mult: $('mult'), hull: $('hull'), speed: $('speed') };
 const hudCache = {};
-const tiltpad = $('tiltpad'), tiltdot = $('tiltdot');
+const tiltpad = $('tiltpad'), tiltdot = $('tiltdot'), powersEl = $('powers');
 function setText(key, val) { if (hudCache[key] !== val) { hudCache[key] = val; hudEls[key].textContent = val; } }
 function score() { return Math.floor(G.dist) + G.bonus; }
 function hud() {
@@ -1598,6 +1832,15 @@ function hud() {
   } else {
     setText('speed', `SPD ${Math.round(G.speed * 60)} m/s`);
     hudEls.speed.classList.remove('warn');
+  }
+  const act = Object.keys(G.pw).filter(k => G.pw[k] > 0), sig = act.join(',');
+  if (hudCache.pw !== sig) {
+    hudCache.pw = sig;
+    powersEl.innerHTML = act.map(k => `<span class="chip" style="--c:${POWERS[k].c}">${POWERS[k].name}<i data-k="${k}"></i></span>`).join('');
+  }
+  for (const bar of powersEl.querySelectorAll('i')) {
+    const k = bar.dataset.k;
+    bar.style.transform = `scaleX(${k === 'shield' ? 1 : clamp(G.pw[k] / POWERS[k].t, 0, 1).toFixed(3)})`;
   }
   const showPad = input.mode === 'tilt';
   if (tiltpad.hidden === showPad) tiltpad.hidden = !showPad;
@@ -1653,11 +1896,13 @@ async function start() {
     setTimeout(() => {
       if (G.state !== 'playing' && G.state !== 'paused') return;
       if (input.tiltSeen) { input.mode = 'tilt'; input.needCalib = true; toast(isPaper() ? 'Tilt to bank and turn. Tip the top away to pull up. Ride the warm air over rooftop vents.' : 'Tilt to steer. Hold a finger down to fire.', isPaper() ? 4200 : 2600); }
-      else if (!granted) toast('Motion access was declined. Drag a finger to steer; holding down fires.', 4000);
-      else toast('No tilt sensor found. Drag a finger to steer; holding down fires.', 4000);
+      else {
+        const how = isPaper() ? 'Drag a finger to steer.' : 'Drag a finger to steer; holding down fires.';
+        toast((granted ? 'No tilt sensor found. ' : 'Motion access was declined. ') + how, 4000);
+      }
     }, 900);
   } else {
-    toast('Steer with the mouse or arrow keys. Click or Space fires.');
+    toast(isPaper() ? 'Steer with the mouse or arrow keys.' : 'Steer with the mouse or arrow keys. Click or Space fires.');
   }
   $('calBtn').hidden = !isTouchDevice();
 }
@@ -1692,9 +1937,10 @@ function gameOver() {
   const sc = score(), isBest = sc > bests[G.mode];
   if (isBest) { bests[G.mode] = sc; store.set('best.' + G.mode, sc); }
   $('finalScore').textContent = sc.toLocaleString();
-  $('finalDist').textContent = (G.dist / 10).toFixed(1) + ' km';
+  $('finalDist').textContent = isPaper() ? distLabel() : (G.dist / 10).toFixed(1) + ' km';
   $('finalRings').textContent = G.rings;
   $('finalKills').textContent = G.kills;
+  $('finalNear').textContent = G.near;
   $('finalBest').textContent = bests[G.mode].toLocaleString();
   $('newBest').hidden = !isBest;
   updateBestLabel();
@@ -1755,7 +2001,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // test hook (harmless in production)
-window.__starship = { G, ship, input, settings, cellAt };
+window.__starship = { G, ship, input, settings, cellAt, spawnPower, activatePower, startShower, spawnBirds };
 })();
 </script>
 </body>

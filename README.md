@@ -20,6 +20,10 @@ In all modes (firing is only in the space modes):
 - Each ring threaded in a row raises your score multiplier, up to ×6. Missing a ring or taking a hit resets it.
 - Collect amber crystals for points and green repair kits to restore hull.
 - Red brackets mark asteroids that are on a collision course with you.
+- **Close calls** score a bonus: slip past an asteroid just outside its reach, or skim a wall, a rooftop or the street in the paper plane. Close calls within a few seconds of each other chain up to ×5.
+- **Power-ups** float by every 15 seconds or so: *Shield* absorbs one hit, *Magnet* pulls crystals to you, *×2 score* doubles points for 10 seconds, and *Blaster* (space modes) fires a faster spread shot. Active power-ups show under your score with a countdown bar.
+- **Events:** in the space modes a *meteor shower* hits every 45 seconds or so; get through its 10 seconds without losing hull for a bonus. In the city, *pigeon* flocks cross the streets and knock off speed if you clip one.
+- Distance **milestones** give a bonus (with fireworks over the city).
 - Turn on *Reverse up/down* or *Reverse left/right* in settings if you prefer it the other way. If steering feels twitchy, try *Low* sensitivity. While flying, the dot in the bottom-left corner shows what the game reads from your tilt.
 
 Without a tilt sensor, drag a finger to steer (in open space, let go to fly straight). On a computer, steer with the mouse or arrow keys/WASD, fire with click or Space, pause with P or Esc, and press C to recentre.
