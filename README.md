@@ -6,12 +6,14 @@ A spaceship flying game for phones, steered by tilting the device. It is a singl
 
 ## How to play
 
-Pick a mode on the title screen. Each mode keeps its own best score.
+Pick one of three modes on the title screen. Each mode keeps its own best score.
 
 - **Tunnel run:** fly down an asteroid tunnel. Tilt sets where the ship sits inside it: tilt left and right to slide sideways, tip the top edge away from you to rise and back toward you to drop. Rings come straight at you.
 - **Open space:** no walls, and you can turn all the way around. Tilt left and right to turn, tip the top edge away to climb and back to dive. Hold a tilt to keep turning and return to neutral to fly straight; the nose eases back to level on its own. One ring at a time appears ahead, and an arrow at the screen edge points to it with the distance when it is off screen.
 
-In both modes:
+- **Paper plane:** glide through an endless city at dusk. There is no engine: diving builds speed, pulling up (tip the top edge away) trades that speed for height, and if you get too slow the plane stalls and drops its nose. Tilt left and right to bank and turn; tight turns sink unless you pull up as well. Warm air rises from rooftop vents (the shimmering columns), so fly through one to gain height, and each hoop you thread gives a gust of speed. Hitting a building or the street crumples the plane; after three crumples the run ends. The HUD shows altitude, airspeed, and warns you when you stall or ride an updraft.
+
+In all modes (firing is only in the space modes):
 
 - When you press Launch, the way you are holding the phone becomes "neutral". The ⊕ button resets neutral to your current grip, and rotating the screen resets it too.
 - **Hold a finger on the screen to fire** twin lasers. Large asteroids take two hits.

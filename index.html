@@ -66,6 +66,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 }
 .icon-btn:focus-visible, .btn:focus-visible, .seg label:has(input:focus-visible), .toggle:has(input:focus-visible) { outline: 2px solid var(--ion); outline-offset: 2px; }
 .icon-btn svg { width: 18px; height: 18px; }
+.speed.warn { color: var(--hazard); }
 .speed { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; letter-spacing: 0.1em; }
 
 /* Panels */
@@ -107,7 +108,7 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
 .keys { font-size: 12px; color: var(--dim); line-height: 1.6; }
 .keys b { color: var(--hull); font-weight: 600; }
 
-.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.modes { display: grid; gap: 8px; }
 .mode {
   position: relative; display: grid; gap: 4px; align-content: start; cursor: pointer; touch-action: manipulation;
   padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, 0.02);
@@ -190,7 +191,7 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
         <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
       </button>
     </div>
-    <span class="label">Hull</span>
+    <span class="label" id="hullLabel">Hull</span>
     <div class="hull" id="hull"><i></i><i></i><i></i></div>
     <span class="speed" id="speed"></span>
   </div>
@@ -202,13 +203,15 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
     <h1>Starship <span>Drift</span></h1>
     <div class="how">
       <div class="phone-demo" aria-hidden="true"><div></div></div>
-      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Hold a finger on the screen to fire.</p>
+      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. In the space modes, hold a finger on the screen to fire.</p>
     </div>
     <div class="modes" role="radiogroup" aria-label="Game mode">
       <label class="mode"><input type="radio" name="mode" id="modeTunnel" value="tunnel">
         <b>Tunnel run</b><span>Weave through an asteroid tunnel. Tilt moves the ship around inside it.</span></label>
       <label class="mode"><input type="radio" name="mode" id="modeOpen" value="open">
         <b>Open space</b><span>Fly free in any direction. Tilt turns the ship; follow the arrow to each ring.</span></label>
+      <label class="mode"><input type="radio" name="mode" id="modePaper" value="paper">
+        <b>Paper plane</b><span>Glide through a city at dusk. Dive for speed, pull up to climb, and ride warm air rising off rooftops.</span></label>
     </div>
     <p class="keys">On a computer: steer with the <b>mouse</b> or <b>arrow keys</b>, fire with <b>click</b> or <b>Space</b>, pause with <b>P</b>.</p>
     <div class="stack">
@@ -291,8 +294,9 @@ const store = {
   set(k, v) { try { localStorage.setItem('starshipDrift.' + k, JSON.stringify(v)); } catch (e) {} }
 };
 const settings = Object.assign({ mode: 'open', sens: 'med', reverseX: false, flipY: false, sound: true }, store.get('settings', {}));
-if (settings.mode !== 'tunnel' && settings.mode !== 'open') settings.mode = 'open';
-const bests = { tunnel: store.get('best.tunnel', store.get('best', 0)) | 0, open: store.get('best.open', 0) | 0 };
+if (!['tunnel', 'open', 'paper'].includes(settings.mode)) settings.mode = 'open';
+const bests = { tunnel: store.get('best.tunnel', store.get('best', 0)) | 0, open: store.get('best.open', 0) | 0, paper: store.get('best.paper', 0) | 0 };
+const MODE_NAMES = { tunnel: 'tunnel run', open: 'open space', paper: 'paper plane' };
 const SENS = { low: 42, med: 30, high: 20 };   // degrees of tilt for full deflection
 
 // ---------- world constants ----------
@@ -363,7 +367,7 @@ function updateCamera() {
     cam.roll = 0;
   } else {
     cam.p = addS(addS(ship.p, b.f, -CAM_BACK), b.u, CAM_UP);
-    cam.roll = -ship.bank * 0.4;
+    cam.roll = -ship.bank * (isPaper() ? 0.55 : 0.4);
   }
 }
 // world point → [screenX, screenY, pixels per world unit at that depth, depth] or null
@@ -395,7 +399,13 @@ function reset() {
   Object.assign(ship, { p: v3(), prev: v3(), yaw: 0, pitch: 0, yawRate: 0, pitchRate: 0, bank: 0, vx: 0, vy: 0 });
   input.tx = input.ty = 0;
   updateCamera();
-  if (!isTunnel()) for (let i = 0; i < 55; i++) spawnRock(rand(28, 115), 1.3);
+  if (isPaper()) {
+    // start above an empty street, gliding along it
+    ship.p = v3(0, 34, 4); ship.prev = v3(0, 34, 4);
+    G.speed = 13; G.crumbs = []; G.crumbT = 0; G.lift = 0; G.stall = false;
+    G.lastSafe = { p: v3(0, 34, 4), yaw: 0 };
+    updateCamera();
+  } else if (!isTunnel()) for (let i = 0; i < 55; i++) spawnRock(rand(28, 115), 1.3);
 }
 
 // sky: fixed stars, a sun, a ringed planet and nebulae at infinity
@@ -665,6 +675,7 @@ function spawnTunnelRing() {
 }
 function spawnGems() {
   if (isTunnel()) return spawnTunnelGems();
+  if (isPaper()) return spawnPaperGems();
   const b = shipBasis(), start = aheadPoint(50, 75, 0.7);
   const step = norm(addS(addS(b.f, b.r, rand(-1, 1)), b.u, rand(-0.6, 0.6)));
   const n = 5 + (Math.random() * 3 | 0);
@@ -672,6 +683,7 @@ function spawnGems() {
 }
 function spawnRing() {
   if (isTunnel()) return spawnTunnelRing();
+  if (isPaper()) return spawnPaperRing();
   const p = aheadPoint(55, 75, 0.55), R = 2.3;
   const n = norm(sub(ship.p, p));
   const a = norm(cross(n, Math.abs(n.y) < 0.9 ? v3(0, 1, 0) : v3(1, 0, 0))), b = cross(n, a);
@@ -680,9 +692,15 @@ function spawnRing() {
   G.ents.push(G.ring);
 }
 function spawnRepair() {
+  if (isPaper()) return spawnPaperRepair();
   G.ents.push({ k: 'repair', p: isTunnel() ? boxPoint(0.7) : aheadPoint(55, 75, 0.6), r: 0.55, spin: 0 });
 }
 function maintainWorld(dt) {
+  if (isPaper()) {
+    pruneCity();
+    G.ents = G.ents.filter(e => e === G.ring || len(sub(e.p, ship.p)) < 140);
+    return;
+  }
   if (isTunnel()) {
     G.ents = G.ents.filter(e => e === G.ring || e.p.z > cam.p.z + 0.4);
     if ((G.timers.rock -= dt) <= 0) { spawnTunnelRock(); G.timers.rock = Math.max(0.13, 0.62 - (G.t || 0) * 0.005) * rand(0.6, 1.4); }
@@ -746,6 +764,7 @@ function ringDone(success) {
   if (success) {
     G.rings++; G.combo = Math.min(G.combo + 1, 5);
     addScore(50, '#5ce1ff'); sfx.ring(); buzz(25);
+    if (isPaper()) G.speed = Math.min(30, G.speed + 4); // the hoop gives a gust
   } else {
     if (G.combo > 0) pop('Combo lost', '#ff4d6d');
     G.combo = 0; sfx.miss();
@@ -770,6 +789,7 @@ function checkRing() {
 
 function moveShip(dt, steer) {
   ship.prev = v3(ship.p.x, ship.p.y, ship.p.z);
+  if (isPaper()) { movePaper(dt, steer); updateCamera(); wrapDust(); return; }
   if (isTunnel()) {
     // tilt sets where in the tunnel the ship sits; it glides there
     const tx = (steer ? input.tx : Math.sin(ambientT * 0.7) * 0.3) * BX;
@@ -799,11 +819,13 @@ function moveShip(dt, steer) {
 
 function update(dt) {
   G.t += dt;
-  G.speed = 16 + Math.min(34, G.t * 0.45);
+  if (!isPaper()) G.speed = 16 + Math.min(34, G.t * 0.45);
   G.dist += G.speed * dt * 0.5;
 
   readInput(dt);
   moveShip(dt, true);
+  if (isPaper()) paperCollide(dt);
+  if (G.state !== 'playing') return;
   maintainWorld(dt);
 
   const T = G.timers;
@@ -812,7 +834,7 @@ function update(dt) {
   if ((T.repair -= dt) <= 0) { if (G.hull < 3) spawnRepair(); T.repair = rand(18, 26); }
 
   G.fireCd -= dt;
-  if ((input.firing || input.keys.f) && G.fireCd <= 0) { fire(); G.fireCd = 0.16; }
+  if (!isPaper() && (input.firing || input.keys.f) && G.fireCd <= 0) { fire(); G.fireCd = 0.16; }
 
   for (const e of G.ents) {
     if (e.k === 'rock') { e.p = addS(e.p, e.v, dt); e.rot += e.vr * dt; if (e.flash > 0) e.flash -= dt; }
@@ -880,8 +902,312 @@ function ambient(dt) {
   if (G.red > 0) G.red -= dt;
 }
 
+// ---------- paper plane: endless city + glide physics ----------
+const isPaper = () => G.mode === 'paper';
+// Streets run along x = i·CELL and z = j·CELL; each block between them may hold one building.
+const CELL = 24, CITY_R = 210;
+// Glider tuning (see glide model in moveShip): trim speed, drag, pitch authority, speed→lift, phugoid damping, trim glide angle
+const GLIDE = { VT: 13, K: 0.0052, auth: 0.7, spd: 1.2, damp: 0.9, trim: -0.09 };
+const cityCache = new Map();
+function hash(i, j, n) {
+  let h = Math.imul(i | 0, 374761393) ^ Math.imul(j | 0, 668265263) ^ Math.imul(n | 0, 1103515245);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function cellAt(i, j) {
+  const key = i + ',' + j;
+  let c = cityCache.get(key);
+  if (c !== undefined) return c;
+  const r = n => hash(i, j, n);
+  c = null;
+  if (r(0) > 0.1) { // about one block in ten is an open plaza
+    const x0 = i * CELL + 5 + r(1) * 3, x1 = (i + 1) * CELL - 5 - r(2) * 3;
+    const z0 = j * CELL + 5 + r(3) * 3, z1 = (j + 1) * CELL - 5 - r(4) * 3;
+    const h = 8 + 58 * Math.pow(r(5), 2.2);
+    c = { k: 'bld', i, j, x0, x1, z0, z1, h, vent: r(6) < 0.2, tone: (r(7) * 3) | 0, c: v3((x0 + x1) / 2, h / 2, (z0 + z1) / 2) };
+  }
+  cityCache.set(key, c);
+  return c;
+}
+function pruneCity() {
+  if (cityCache.size < 3000) return;
+  const ci = Math.floor(ship.p.x / CELL), cj = Math.floor(ship.p.z / CELL);
+  for (const k of cityCache.keys()) {
+    const [i, j] = k.split(',').map(Number);
+    if (Math.abs(i - ci) > 14 || Math.abs(j - cj) > 14) cityCache.delete(k);
+  }
+}
+function buildingAt(p, pad) {
+  const b = cellAt(Math.floor(p.x / CELL), Math.floor(p.z / CELL));
+  return b && p.x > b.x0 - pad && p.x < b.x1 + pad && p.z > b.z0 - pad && p.z < b.z1 + pad && p.y < b.h + pad ? b : null;
+}
+// warm air rising from rooftop vents
+function draftAt(p) {
+  const b = cellAt(Math.floor(p.x / CELL), Math.floor(p.z / CELL));
+  if (!b || !b.vent) return 0;
+  const d = Math.hypot(p.x - b.c.x, p.z - b.c.z), above = p.y - b.h;
+  if (d > 9 || above < 0 || above > 50) return 0;
+  return 11 * (1 - above / 50) * (1 - d / 18);
+}
+// a point on the street nearest to `dist` ahead, plus the direction that street runs
+function streetAhead(dist) {
+  const f = shipBasis().f, l = Math.hypot(f.x, f.z) || 1, fx = f.x / l, fz = f.z / l;
+  const p = v3(ship.p.x + fx * dist, 0, ship.p.z + fz * dist);
+  const sx = Math.round(p.x / CELL) * CELL, sz = Math.round(p.z / CELL) * CELL;
+  let along;
+  if (Math.abs(p.x - sx) < Math.abs(p.z - sz)) { p.x = sx + rand(-1.5, 1.5); along = v3(0, 0, Math.sign(fz) || 1); }
+  else { p.z = sz + rand(-1.5, 1.5); along = v3(Math.sign(fx) || 1, 0, 0); }
+  return { p, along };
+}
+const paperAlt = () => clamp(ship.p.y - rand(-2, 7), 5, 45);
+function spawnPaperRing() {
+  const { p } = streetAhead(rand(45, 65)), R = 2.6;
+  p.y = paperAlt();
+  const n = norm(v3(ship.p.x - p.x, 0, ship.p.z - p.z));
+  const a = norm(cross(n, v3(0, 1, 0))), b = cross(n, a);
+  G.ring = { k: 'ring', p, n, a, b, R, spin: 0, state: 0, t: 0 };
+  G.ents.push(G.ring);
+}
+function spawnPaperGems() {
+  const { p, along } = streetAhead(rand(35, 55)), y = paperAlt(), n = 5 + (Math.random() * 3 | 0);
+  for (let i = 0; i < n; i++) G.ents.push({ k: 'gem', p: v3(p.x + along.x * i * 2.6, y - i * 0.25, p.z + along.z * i * 2.6), r: 0.42, spin: i * 0.7 });
+}
+function spawnPaperRepair() {
+  const { p } = streetAhead(rand(45, 60));
+  p.y = paperAlt();
+  G.ents.push({ k: 'repair', p, r: 0.55, spin: 0 });
+}
+
+// Glide model: no engine. Speed comes from gravity minus drag; lift (which grows with speed and
+// with how hard you pull up) bends the flight path. Banking tilts lift sideways, which turns the
+// plane but leaves less to hold it up. A damping term toward the trim glide keeps the
+// swoop-and-recover motion of a real paper plane from running away.
+function glideStep(dt, cmd, bankT) {
+  const o = GLIDE, g = 9.8;
+  ship.bank += (bankT - ship.bank) * Math.min(1, dt * 3);
+  const cl = 1 + o.auth * cmd;
+  let lift = g * Math.min(2.2, (1 + o.spd * (G.speed / o.VT - 1)) * cl);
+  G.stall = G.speed < 6.5;
+  if (G.speed < 6) lift *= Math.max(0.2, G.speed / 6);
+  const dGam = (lift * Math.cos(ship.bank) - g * Math.cos(ship.pitch)) / G.speed - o.damp * (ship.pitch - o.trim);
+  ship.pitchRate += (dGam - ship.pitchRate) * Math.min(1, dt * 4);
+  ship.pitch = clamp(ship.pitch + ship.pitchRate * dt, -1.3, 1.3);
+  ship.yawRate = lift * Math.sin(ship.bank) / (G.speed * Math.cos(ship.pitch));
+  ship.yaw += ship.yawRate * dt;
+  G.speed = clamp(G.speed + (-g * Math.sin(ship.pitch) - o.K * G.speed * G.speed) * dt, 3, 40);
+}
+function movePaper(dt, steer) {
+  if (steer) glideStep(dt, -input.ty, input.tx * 0.95);
+  else {
+    // title and game-over: a steady glide straight down the street
+    if (G.state === 'title') G.speed = 13;
+    ship.bank += (Math.sin(ambientT * 0.6) * 0.12 - ship.bank) * Math.min(1, dt * 2);
+    ship.pitch = Math.sin(ambientT * 0.4) * 0.04; ship.pitchRate = 0; ship.yawRate = 0;
+  }
+  ship.p = addS(ship.p, shipBasis().f, G.speed * dt);
+  G.lift = steer ? draftAt(ship.p) : 0;
+  if (G.lift) ship.p.y += G.lift * dt;
+}
+function paperCollide(dt) {
+  if ((G.crumbT -= dt) <= 0) { G.crumbs.push({ p: v3(ship.p.x, ship.p.y, ship.p.z), yaw: ship.yaw }); if (G.crumbs.length > 12) G.crumbs.shift(); G.crumbT = 0.5; }
+  if (G.inv > 0) return;
+  const hitGround = ship.p.y < 0.4, hitBuilding = !hitGround && buildingAt(ship.p, 0.35);
+  if (!hitGround && !hitBuilding) return;
+  pop(hitGround ? 'Hit the street' : 'Crumpled', '#ff4d6d');
+  damage();
+  if (G.state === 'playing') paperRespawn();
+}
+// put the plane back on the nearest street a couple of seconds back, flying along it
+function paperRespawn() {
+  const c = G.crumbs.length > 4 ? G.crumbs[G.crumbs.length - 5] : (G.crumbs[0] || G.lastSafe);
+  const yaw = Math.round(c.yaw / (Math.PI / 2)) * (Math.PI / 2);
+  const p = v3(c.p.x, clamp(c.p.y + 3, 10, 70), c.p.z);
+  if (Math.abs(Math.sin(yaw)) < 0.5) p.x = Math.round(p.x / CELL) * CELL; else p.z = Math.round(p.z / CELL) * CELL;
+  Object.assign(ship, { p, prev: v3(p.x, p.y, p.z), yaw, pitch: 0, pitchRate: 0, yawRate: 0, bank: 0 });
+  G.speed = 13; G.inv = 2; G.crumbs = []; G.lastSafe = { p: v3(p.x, p.y, p.z), yaw };
+  updateCamera();
+}
+
+// --- city rendering ---
+const SUNC = norm(v3(-0.6, 0.07, 0.8));
+const HAZE = [196, 128, 150];
+const TONES = [[54, 60, 92], [72, 62, 94], [46, 66, 88]];
+const SKYLINE = [];
+for (let i = 0; i < 170; i++) SKYLINE.push({ a: i / 170 * 6.283 + rand(-0.02, 0.02), w: rand(0.03, 0.08), h: rand(0.015, 0.09) });
+function camSpace(p) { const d = sub(p, cam.p); return [dot(d, cam.r), dot(d, cam.u), dot(d, cam.f)]; }
+function clipNear(poly, n) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], ain = a[2] >= n, bin = b[2] >= n;
+    if (ain) out.push(a);
+    if (ain !== bin) { const t = (n - a[2]) / (b[2] - a[2]); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, n]); }
+  }
+  return out;
+}
+function polyPath(world) {
+  const cs = clipNear(world.map(camSpace), 0.3);
+  if (cs.length < 3) return false;
+  ctx.beginPath();
+  cs.forEach((c, i) => { const x = CX + c[0] / c[2] * F, y = CY - c[1] / c[2] * F; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+  ctx.closePath();
+  return true;
+}
+const rgb = (c, a = 1) => `rgba(${c[0] | 0}, ${c[1] | 0}, ${c[2] | 0}, ${a})`;
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+function drawCitySky() {
+  const hq = projDir(norm(v3(cam.f.x || 1e-4, 0, cam.f.z)));
+  const hy = hq ? hq[1] : CY;
+  let g = ctx.createLinearGradient(0, hy - H * 1.1, 0, hy);
+  g.addColorStop(0, '#171a44'); g.addColorStop(0.5, '#4d3a76'); g.addColorStop(0.82, '#cf6f8a'); g.addColorStop(1, '#ffb27a');
+  ctx.fillStyle = g; ctx.fillRect(-W, hy - 3 * H, 3 * W, 3 * H);
+  const sq = projDir(SUNC);
+  if (sq) {
+    const r = F * 0.45;
+    g = ctx.createRadialGradient(sq[0], sq[1], 0, sq[0], sq[1], r);
+    g.addColorStop(0, 'rgba(255, 236, 200, 1)'); g.addColorStop(0.07, 'rgba(255, 190, 120, 0.95)');
+    g.addColorStop(0.3, 'rgba(255, 140, 90, 0.25)'); g.addColorStop(1, 'rgba(255, 120, 90, 0)');
+    ctx.fillStyle = g; ctx.fillRect(sq[0] - r, sq[1] - r, r * 2, r * 2);
+  }
+  // distant skyline beyond the generated blocks
+  ctx.fillStyle = 'rgba(92, 62, 104, 0.9)';
+  for (const s of SKYLINE) {
+    const q = projDir(v3(Math.sin(s.a), 0, Math.cos(s.a)));
+    if (!q) continue;
+    const w = s.w * q[2], h = s.h * q[2];
+    if (q[0] + w < -W * 0.4 || q[0] - w > W * 1.4) continue;
+    ctx.fillRect(q[0] - w / 2, q[1] - h, w, h + 1);
+  }
+  // street level
+  g = ctx.createLinearGradient(0, hy, 0, hy + H);
+  g.addColorStop(0, '#6a4a66'); g.addColorStop(0.08, '#2c2238'); g.addColorStop(1, '#121019');
+  ctx.fillStyle = g; ctx.fillRect(-W, hy, 3 * W, 3 * H);
+}
+
+function collectCity(list) {
+  const ci = Math.floor(cam.p.x / CELL), cj = Math.floor(cam.p.z / CELL), n = Math.ceil(CITY_R / CELL);
+  const fx = cam.f.x, fz = cam.f.z;
+  for (let i = ci - n; i <= ci + n; i++) for (let j = cj - n; j <= cj + n; j++) {
+    const cx = (i + 0.5) * CELL - cam.p.x, cz = (j + 0.5) * CELL - cam.p.z, dist = Math.hypot(cx, cz);
+    if (dist > CITY_R) continue;
+    const ahead = cx * fx + cz * fz;
+    if (ahead < -CELL * 1.2 && dist > CELL * 1.5) continue;           // behind us
+    const side = Math.abs(cx * cam.r.x + cz * cam.r.z);
+    if (side > Math.max(0, ahead) * 1.7 + CELL * 1.5) continue;          // outside the view
+    const b = cellAt(i, j);
+    // painter's order by distance to each block's nearest point, which keeps separate boxes in order
+    if (b) {
+      const c = cam.p;
+      list.push([Math.hypot(clamp(c.x, b.x0, b.x1) - c.x, clamp(c.y, 0, b.h) - c.y, clamp(c.z, b.z0, b.z1) - c.z), b]);
+      if (b.vent) list.push([Math.hypot(b.c.x - c.x, clamp(c.y, b.h, b.h + 48) - c.y, b.c.z - c.z) - 2, { k: 'draft', b }]);
+    }
+    if (dist < 120) { const lp = v3(i * CELL + 3.2, 5, j * CELL + 3.2); list.push([len(sub(lp, cam.p)), { k: 'lamp', p: lp }]); }
+  }
+}
+
+function drawBuilding(b) {
+  const dist = Math.hypot(b.c.x - cam.p.x, b.c.z - cam.p.z);
+  const fog = Math.pow(clamp((dist - 30) / (CITY_R - 30), 0, 1), 0.8);
+  const { x0, x1, z0, z1, h } = b, base = TONES[b.tone];
+  const faces = [];
+  if (cam.p.x < x0) faces.push([[v3(x0, 0, z1), v3(x0, 0, z0), v3(x0, h, z0), v3(x0, h, z1)], v3(-1, 0, 0), 0]);
+  if (cam.p.x > x1) faces.push([[v3(x1, 0, z0), v3(x1, 0, z1), v3(x1, h, z1), v3(x1, h, z0)], v3(1, 0, 0), 1]);
+  if (cam.p.z < z0) faces.push([[v3(x0, 0, z0), v3(x1, 0, z0), v3(x1, h, z0), v3(x0, h, z0)], v3(0, 0, -1), 2]);
+  if (cam.p.z > z1) faces.push([[v3(x1, 0, z1), v3(x0, 0, z1), v3(x0, h, z1), v3(x1, h, z1)], v3(0, 0, 1), 3]);
+  for (const [pts, n, fi] of faces) {
+    const light = 0.5 + 0.55 * Math.max(0, dot(n, SUNC));
+    if (!polyPath(pts)) continue;
+    ctx.fillStyle = rgb(mix([base[0] * light, base[1] * light, base[2] * light], HAZE, fog));
+    ctx.fill();
+    if (dist < 90) drawWindows(b, pts, n, fi, fog);
+  }
+  if (cam.p.y > h && polyPath([v3(x0, h, z0), v3(x1, h, z0), v3(x1, h, z1), v3(x0, h, z1)])) {
+    ctx.fillStyle = rgb(mix([base[0] * 0.8, base[1] * 0.8, base[2] * 0.85], HAZE, fog));
+    ctx.fill();
+    ctx.strokeStyle = rgb([255, 190, 160], 0.25 * (1 - fog)); ctx.lineWidth = 1; ctx.stroke();
+    if (b.vent && dist < 120 && polyPath([v3(b.c.x - 1.5, h, b.c.z - 1.5), v3(b.c.x + 1.5, h, b.c.z - 1.5), v3(b.c.x + 1.5, h, b.c.z + 1.5), v3(b.c.x - 1.5, h, b.c.z + 1.5)])) {
+      ctx.fillStyle = rgb(mix([255, 160, 110], HAZE, fog), 0.9); ctx.fill();
+    }
+  }
+}
+function drawWindows(b, pts, n, fi, fog) {
+  const [p0, p1] = pts, w = Math.hypot(p1.x - p0.x, p1.z - p0.z);
+  const cols = Math.max(1, Math.floor(w / 3)), rows = Math.floor((b.h - 2) / 3.4);
+  const ux = (p1.x - p0.x) / w, uz = (p1.z - p0.z) / w;
+  const a = (1 - fog) * 0.9;
+  if (a < 0.05) return;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    if (hash(b.i * 7 + fi, b.j, r * 131 + c) > 0.33) continue;
+    const t = (c + 0.5) * w / cols;
+    const wp = v3(p0.x + ux * t + n.x * 0.05, 2.5 + r * 3.4, p0.z + uz * t + n.z * 0.05);
+    const q = proj(wp);
+    if (!q) continue;
+    const facing = Math.abs(dot(n, norm(sub(cam.p, wp))));
+    const ww = 1.2 * q[2] * facing, wh = 1.5 * q[2];
+    if (wh < 0.6) continue;
+    ctx.fillStyle = `rgba(255, ${195 + ((r * 7 + c * 13) % 40)}, 120, ${a})`;
+    ctx.fillRect(q[0] - ww / 2, q[1] - wh / 2, ww, wh);
+  }
+}
+function drawDraft(e) {
+  const b = e.b, base = v3(b.c.x, b.h, b.c.z), top = v3(b.c.x, b.h + 48, b.c.z);
+  const q0 = proj(base), q1 = proj(top);
+  if (!q0 && !q1) return;
+  const side = cam.r;
+  if (!polyPath([addS(base, side, -7), addS(base, side, 7), addS(top, side, 9.5), addS(top, side, -9.5)])) return;
+  const ga = q0 || q1, gb = q1 || q0;
+  const g = ctx.createLinearGradient(ga[0], ga[1], gb[0], gb[1]);
+  g.addColorStop(0, 'rgba(255, 220, 190, 0.22)'); g.addColorStop(1, 'rgba(255, 220, 190, 0)');
+  ctx.fillStyle = g; ctx.fill();
+  // shimmering rings rising through the column
+  const now = performance.now() / 1000;
+  ctx.lineWidth = 1.5;
+  for (let k = 0; k < 4; k++) {
+    const y = (now * 8 + k * 12) % 48, q = proj(v3(b.c.x, b.h + y, b.c.z));
+    if (!q) continue;
+    ctx.strokeStyle = `rgba(255, 235, 210, ${0.5 * (1 - y / 48)})`;
+    ctx.beginPath(); ctx.ellipse(q[0], q[1], 6 * q[2], 1.8 * q[2], 0, 0, 6.283); ctx.stroke();
+  }
+}
+function drawLamp(e) {
+  const q = proj(e.p);
+  if (!q) return;
+  const r = Math.max(1.2, 0.3 * q[2]), d = q[3];
+  const a = clamp(1 - d / 120, 0, 1);
+  const g = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], r * 5);
+  g.addColorStop(0, `rgba(255, 214, 150, ${a})`); g.addColorStop(0.25, `rgba(255, 170, 90, ${a * 0.5})`); g.addColorStop(1, 'rgba(255, 150, 80, 0)');
+  ctx.fillStyle = g; ctx.fillRect(q[0] - r * 5, q[1] - r * 5, r * 10, r * 10);
+}
+function drawPaperPlane(u) {
+  const hurt = 3 - G.hull;
+  const lit = clamp(0.5 + ship.bank * 0.35, 0.15, 0.85);
+  // left and right wings, the far one a shade darker as the plane banks
+  ctx.fillStyle = `hsl(42, 35%, ${70 + lit * 26}%)`;
+  ctx.beginPath(); ctx.moveTo(0, -0.78 * u); ctx.lineTo(-1.0 * u, 0.3 * u); ctx.lineTo(-0.07 * u, 0.12 * u); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = `hsl(40, 30%, ${70 + (1 - lit) * 26}%)`;
+  ctx.beginPath(); ctx.moveTo(0, -0.78 * u); ctx.lineTo(1.0 * u, 0.3 * u); ctx.lineTo(0.07 * u, 0.12 * u); ctx.closePath(); ctx.fill();
+  // keel fold underneath
+  ctx.fillStyle = '#b9ae98';
+  ctx.beginPath(); ctx.moveTo(-0.07 * u, 0.12 * u); ctx.lineTo(0, 0.46 * u); ctx.lineTo(0.07 * u, 0.12 * u); ctx.closePath(); ctx.fill();
+  // creases
+  ctx.strokeStyle = 'rgba(110, 98, 80, 0.55)'; ctx.lineWidth = Math.max(1, u * 0.02);
+  ctx.beginPath();
+  ctx.moveTo(0, -0.78 * u); ctx.lineTo(0, 0.46 * u);
+  ctx.moveTo(-0.05 * u, -0.55 * u); ctx.lineTo(-0.62 * u, 0.2 * u);
+  ctx.moveTo(0.05 * u, -0.55 * u); ctx.lineTo(0.62 * u, 0.2 * u);
+  ctx.stroke();
+  // crumples from crashes
+  ctx.strokeStyle = 'rgba(90, 70, 60, 0.7)';
+  for (let k = 0; k < hurt; k++) {
+    const sx = k % 2 ? 1 : -1, x = sx * (0.35 + k * 0.12) * u;
+    ctx.beginPath(); ctx.moveTo(x, -0.05 * u); ctx.lineTo(x + sx * 0.08 * u, 0.05 * u); ctx.lineTo(x - sx * 0.02 * u, 0.12 * u); ctx.lineTo(x + sx * 0.1 * u, 0.22 * u); ctx.stroke();
+  }
+}
+
 // ---------- rendering ----------
 function drawSky() {
+  if (isPaper()) return drawCitySky();
   ctx.fillStyle = '#05060f';
   ctx.fillRect(-W, -H, W * 3, H * 3);
   const big = Math.max(W, H);
@@ -1105,6 +1431,7 @@ function drawShip() {
   ctx.save();
   ctx.globalAlpha = blink ? 0.3 : 1;
   ctx.translate(sx, sy); ctx.rotate(bank); ctx.scale(1, 1 - Math.abs(pitch) * 0.6);
+  if (isPaper()) { drawPaperPlane(u); ctx.restore(); ctx.globalAlpha = 1; return; }
 
   // engine glow (additive)
   ctx.globalCompositeOperation = 'lighter';
@@ -1175,7 +1502,7 @@ function drawShip() {
   ctx.globalAlpha = 1;
 }
 
-const drawers = { rock: drawRock, ring: drawRing, gem: drawGem, repair: drawRepair, bolt: drawBolt, part: drawPart, ship: drawShip };
+const drawers = { rock: drawRock, ring: drawRing, gem: drawGem, repair: drawRepair, bolt: drawBolt, part: drawPart, ship: drawShip, bld: drawBuilding, draft: drawDraft, lamp: drawLamp };
 
 // points to the active ring when it is off screen, with the distance to it
 function drawRingPointer() {
@@ -1226,10 +1553,13 @@ function render() {
   drawCorridor();
   drawDust();
   const list = [];
-  for (const e of G.ents) list.push([camDepth(e.p), e]);
-  for (const b of G.bolts) list.push([camDepth(b.p), b]);
-  for (const p of G.parts) list.push([camDepth(p.p), p]);
-  if (G.state !== 'over') list.push([CAM_BACK, { k: 'ship' }]);
+  // the city sorts by straight-line distance (see collectCity); space scenes by depth
+  const key = isPaper() ? (q => len(sub(q, cam.p))) : camDepth;
+  for (const e of G.ents) list.push([key(e.p), e]);
+  for (const b of G.bolts) list.push([key(b.p), b]);
+  for (const p of G.parts) list.push([key(p.p), p]);
+  if (isPaper()) collectCity(list);
+  if (G.state !== 'over') list.push([isPaper() ? key(ship.p) : CAM_BACK, { k: 'ship' }]);
   list.sort((a, b) => b[0] - a[0]);
   for (const [z, o] of list) if (z > 0.3) drawers[o.k](o);
   ctx.restore();
@@ -1262,7 +1592,13 @@ function hud() {
   if (G.state !== 'playing') return;
   setText('score', score().toLocaleString());
   setText('mult', G.combo ? `×${G.combo + 1} ring chain` : '');
-  setText('speed', `SPD ${Math.round(G.speed * 60)} m/s`);
+  if (isPaper()) {
+    setText('speed', `ALT ${Math.max(0, Math.round(ship.p.y))} m · ${Math.round(G.speed * 3.6)} km/h${G.stall ? ' · STALL' : G.lift ? ' · UPDRAFT' : ''}`);
+    hudEls.speed.classList.toggle('warn', !!G.stall);
+  } else {
+    setText('speed', `SPD ${Math.round(G.speed * 60)} m/s`);
+    hudEls.speed.classList.remove('warn');
+  }
   const showPad = input.mode === 'tilt';
   if (tiltpad.hidden === showPad) tiltpad.hidden = !showPad;
   if (showPad) tiltdot.style.transform = `translate(${(input.tx * 22).toFixed(1)}px, ${(input.ty * 22).toFixed(1)}px)`;
@@ -1291,7 +1627,7 @@ function show(name) {
   if (name === 'paused') $('pauseSettingsSlot').appendChild(settingsEl);
   else if (name === 'title') screens.title.querySelector('.panel').appendChild(settingsEl);
 }
-function updateBestLabel() { const b = bests[settings.mode]; $('bestTitle').textContent = b ? `Best ${settings.mode === 'tunnel' ? 'tunnel run' : 'open space'} score: ${b.toLocaleString()}` : ''; }
+function updateBestLabel() { const b = bests[settings.mode]; $('bestTitle').textContent = b ? `Best ${MODE_NAMES[settings.mode]} score: ${b.toLocaleString()}` : ''; }
 
 let wakeLock = null;
 async function keepAwake() {
@@ -1307,6 +1643,7 @@ async function start() {
   input.mode = isTouchDevice() ? 'touch' : 'mouse';
   G.state = 'playing';
   for (const k in hudCache) delete hudCache[k];
+  $('hullLabel').textContent = isPaper() ? 'Paper' : 'Hull';
   show('playing');
   humStart();
   keepAwake();
@@ -1315,7 +1652,7 @@ async function start() {
     // Trust real sensor data over the permission answer: some browsers report one without the other.
     setTimeout(() => {
       if (G.state !== 'playing' && G.state !== 'paused') return;
-      if (input.tiltSeen) { input.mode = 'tilt'; input.needCalib = true; toast('Tilt to steer. Hold a finger down to fire.'); }
+      if (input.tiltSeen) { input.mode = 'tilt'; input.needCalib = true; toast(isPaper() ? 'Tilt to bank and turn. Tip the top away to pull up. Ride the warm air over rooftop vents.' : 'Tilt to steer. Hold a finger down to fire.', isPaper() ? 4200 : 2600); }
       else if (!granted) toast('Motion access was declined. Drag a finger to steer; holding down fires.', 4000);
       else toast('No tilt sensor found. Drag a finger to steer; holding down fires.', 4000);
     }, 900);
@@ -1383,7 +1720,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // settings controls
-$(settings.mode === 'tunnel' ? 'modeTunnel' : 'modeOpen').checked = true;
+$({ tunnel: 'modeTunnel', open: 'modeOpen', paper: 'modePaper' }[settings.mode]).checked = true;
 document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener('change', () => {
   settings.mode = r.value; store.set('settings', settings);
   updateBestLabel();
@@ -1418,7 +1755,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // test hook (harmless in production)
-window.__starship = { G, ship, input, settings };
+window.__starship = { G, ship, input, settings, cellAt };
 })();
 </script>
 </body>
