@@ -179,7 +179,7 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
     <h1>Starship <span>Drift</span></h1>
     <div class="how">
       <div class="phone-demo" aria-hidden="true"><div></div></div>
-      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Tilt to steer, thread the rings, and hold a finger on the screen to fire.</p>
+      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Tilt left and right to steer, tip the top edge away to dive and back to climb. Thread the rings, and hold a finger on the screen to fire.</p>
     </div>
     <p class="keys">On a computer: steer with the <b>mouse</b> or <b>arrow keys</b>, fire with <b>click</b> or <b>Space</b>, pause with <b>P</b>.</p>
     <div class="stack">
@@ -196,8 +196,8 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
         </div>
       </div>
       <div class="row">
-        <span class="label">Flight-stick pitch</span>
-        <label class="toggle" aria-label="Invert pitch, flight-stick style"><input type="checkbox" id="invert"><span></span></label>
+        <span class="label">Reverse up/down</span>
+        <label class="toggle" aria-label="Reverse up and down tilt"><input type="checkbox" id="invert"><span></span></label>
       </div>
       <div class="row">
         <span class="label">Sound</span>
@@ -255,12 +255,12 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('starshipDrift.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('starshipDrift.' + k, JSON.stringify(v)); } catch (e) {} }
 };
-const settings = Object.assign({ sens: 'med', invert: false, sound: true }, store.get('settings', {}));
+const settings = Object.assign({ sens: 'med', reverseY: false, sound: true }, store.get('settings', {}));
 let best = store.get('best', 0) | 0;
-const SENS = { low: 30, med: 20, high: 13 };   // degrees of tilt for full deflection
+const SENS = { low: 42, med: 30, high: 20 };   // degrees of tilt for full deflection
 
 // ---------- world constants ----------
-const SHIP_Z = 3, FAR = 80, SHIP_R = 0.55, CAM_FOLLOW = 0.55, CAM_LIFT = 0.9; // camera sits above the ship so it flies low on screen
+const SHIP_Z = 3, FAR = 80, SHIP_R = 0.55, CAM_FOLLOW = 0.35, CAM_LIFT = 0.9; // camera sits above the ship so it flies low on screen
 const cv = $('game'), ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1, F = 1, CX = 0, CY = 0, BX = 4.2, BY = 5;
 
@@ -395,8 +395,9 @@ function onOrient(ev) {
     input.L0 = L; input.P0 = P; input.sL = 0; input.sP = 0; input.needCalib = false;
   }
   const dL = wrap180(L - input.L0), dP = wrap180(P - input.P0);
-  input.sL += (dL - input.sL) * 0.45;
-  input.sP += (dP - input.sP) * 0.45;
+  // Low-pass filter: hand tremor and sensor noise otherwise make the ship twitch.
+  input.sL += (dL - input.sL) * 0.2;
+  input.sP += (dP - input.sP) * 0.2;
 }
 addEventListener('deviceorientation', onOrient);
 const onRotate = () => { input.needCalib = true; if (G.state === 'playing' && input.mode === 'tilt') toast('Screen rotated. Neutral tilt reset.'); };
@@ -416,9 +417,16 @@ const isTouchDevice = () => matchMedia('(pointer: coarse)').matches || navigator
 
 function applyTilt() {
   const m = SENS[settings.sens] || 20;
-  const dz = v => { const a = Math.abs(v); return a < 0.04 ? 0 : Math.sign(v) * (a - 0.04) / 0.96; };
-  input.tx = clamp(dz(input.sL / m), -1, 1);
-  input.ty = clamp(dz(input.sP / m) * (settings.invert ? -1 : 1), -1, 1);
+  // Dead zone, then a soft response curve: small tilts make fine adjustments, big tilts still reach the edge.
+  const curve = v => {
+    const a = Math.min(1, Math.abs(v));
+    if (a < 0.07) return 0;
+    const n = (a - 0.07) / 0.93;
+    return Math.sign(v) * n * (0.4 + 0.6 * n);
+  };
+  input.tx = curve(input.sL / m);
+  // Default: tip the top edge away to dive, like pushing a flight stick forward.
+  input.ty = -curve(input.sP / m) * (settings.reverseY ? -1 : 1);
 }
 
 // ---------- pointer + keyboard ----------
@@ -567,7 +575,7 @@ function update(dt) {
 
   readInput(dt);
   const tx = input.tx * BX, ty = input.ty * BY;
-  ship.vx = (tx - ship.x) * 9; ship.vy = (ty - ship.y) * 9;
+  ship.vx = (tx - ship.x) * 6; ship.vy = (ty - ship.y) * 6;
   ship.x = clamp(ship.x + ship.vx * dt, -BX, BX);
   ship.y = clamp(ship.y + ship.vy * dt, -BY, BY);
   cam.x = ship.x * CAM_FOLLOW; cam.y = ship.y * CAM_FOLLOW - CAM_LIFT;
@@ -1039,10 +1047,10 @@ document.addEventListener('visibilitychange', () => {
 // settings controls
 const sensIds = { low: 'sensLow', med: 'sensMed', high: 'sensHigh' };
 $(sensIds[settings.sens] || 'sensMed').checked = true;
-$('invert').checked = !!settings.invert;
+$('invert').checked = !!settings.reverseY;
 $('sound').checked = !!settings.sound;
 document.querySelectorAll('input[name="sens"]').forEach(r => r.addEventListener('change', () => { settings.sens = r.value; store.set('settings', settings); }));
-$('invert').addEventListener('change', e => { settings.invert = e.target.checked; store.set('settings', settings); });
+$('invert').addEventListener('change', e => { settings.reverseY = e.target.checked; store.set('settings', settings); });
 $('sound').addEventListener('change', e => { settings.sound = e.target.checked; store.set('settings', settings); humUpdate(); });
 
 updateBestLabel();
