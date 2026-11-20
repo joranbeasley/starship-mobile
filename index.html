@@ -107,6 +107,17 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
 .keys { font-size: 12px; color: var(--dim); line-height: 1.6; }
 .keys b { color: var(--hull); font-weight: 600; }
 
+.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.mode {
+  position: relative; display: grid; gap: 4px; align-content: start; cursor: pointer; touch-action: manipulation;
+  padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, 0.02);
+}
+.mode input { position: absolute; opacity: 0; pointer-events: none; }
+.mode b { font-family: var(--display); font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; }
+.mode span { font-size: 11.5px; line-height: 1.45; color: var(--dim); }
+.mode:has(input:checked) { border-color: var(--plasma); background: rgba(92, 225, 255, 0.1); box-shadow: inset 0 0 0 1px var(--plasma); }
+.mode:has(input:checked) b { color: var(--plasma); }
+.mode:has(input:focus-visible) { outline: 2px solid var(--ion); outline-offset: 2px; }
 .settings { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -191,7 +202,13 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
     <h1>Starship <span>Drift</span></h1>
     <div class="how">
       <div class="phone-demo" aria-hidden="true"><div></div></div>
-      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Tilt left and right to turn, tip the top edge away to climb and back to dive. Space is open in every direction: follow the arrow to the next ring, and hold a finger on the screen to fire.</p>
+      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Hold a finger on the screen to fire.</p>
+    </div>
+    <div class="modes" role="radiogroup" aria-label="Game mode">
+      <label class="mode"><input type="radio" name="mode" id="modeTunnel" value="tunnel">
+        <b>Tunnel run</b><span>Weave through an asteroid tunnel. Tilt moves the ship around inside it.</span></label>
+      <label class="mode"><input type="radio" name="mode" id="modeOpen" value="open">
+        <b>Open space</b><span>Fly free in any direction. Tilt turns the ship; follow the arrow to each ring.</span></label>
     </div>
     <p class="keys">On a computer: steer with the <b>mouse</b> or <b>arrow keys</b>, fire with <b>click</b> or <b>Space</b>, pause with <b>P</b>.</p>
     <div class="stack">
@@ -273,8 +290,9 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('starshipDrift.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('starshipDrift.' + k, JSON.stringify(v)); } catch (e) {} }
 };
-const settings = Object.assign({ sens: 'med', reverseX: false, flipY: false, sound: true }, store.get('settings', {}));
-let best = store.get('best', 0) | 0;
+const settings = Object.assign({ mode: 'open', sens: 'med', reverseX: false, flipY: false, sound: true }, store.get('settings', {}));
+if (settings.mode !== 'tunnel' && settings.mode !== 'open') settings.mode = 'open';
+const bests = { tunnel: store.get('best.tunnel', store.get('best', 0)) | 0, open: store.get('best.open', 0) | 0 };
 const SENS = { low: 42, med: 30, high: 20 };   // degrees of tilt for full deflection
 
 // ---------- world constants ----------
@@ -283,17 +301,25 @@ const SENS = { low: 42, med: 30, high: 20 };   // degrees of tilt for full defle
 const SHIP_R = 0.55, CAM_BACK = 3.6, CAM_UP = 0.95, FOG = 125, TURN = 1.5;
 const cv = $('game'), ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1, F = 1, CX = 0, CY = 0;
+// Tunnel mode: the ship moves inside a box of half-size BX × BY and the camera follows it only partly.
+const TUNNEL_FOLLOW = 0.35;
+let BX = 4.2, BY = 4.2;
+const isTunnel = () => G.mode === 'tunnel';
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = innerWidth; H = innerHeight;
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  F = Math.min(W, H) * 0.85;
+  BX = 4.2; BY = BX * clamp(H / W, 0.6, 1.4);
+  if (G.mode === 'tunnel') {
+    // fit the box so the ship at its edge stays on screen
+    const off = 1 - TUNNEL_FOLLOW;
+    F = Math.min(0.40 * W * CAM_BACK / (off * BX), 0.34 * H * CAM_BACK / (off * BY));
+  } else F = Math.min(W, H) * 0.85;
   CX = W / 2; CY = H * 0.47;
 }
 addEventListener('resize', resize);
-resize();
 
 // ---------- vectors ----------
 const v3 = (x = 0, y = 0, z = 0) => ({ x, y, z });
@@ -315,8 +341,9 @@ function segDist(a, b, c) {
 }
 
 // ---------- state ----------
-const G = { state: 'title', speed: 12 };
-const ship = { p: v3(), prev: v3(), yaw: 0, pitch: 0, yawRate: 0, pitchRate: 0, bank: 0 };
+const G = { state: 'title', speed: 12, mode: settings.mode };
+resize();
+const ship = { p: v3(), prev: v3(), yaw: 0, pitch: 0, yawRate: 0, pitchRate: 0, bank: 0, vx: 0, vy: 0 };
 const cam = { p: v3(), f: v3(0, 0, 1), r: v3(1, 0, 0), u: v3(0, 1, 0), roll: 0 };
 const input = {
   mode: 'mouse', tx: 0, ty: 0, keys: {}, usingKeys: false, firing: false, ptr: null,
@@ -331,8 +358,13 @@ function shipBasis() {
 function updateCamera() {
   const b = shipBasis();
   cam.f = b.f; cam.r = b.r; cam.u = b.u;
-  cam.p = addS(addS(ship.p, b.f, -CAM_BACK), b.u, CAM_UP);
-  cam.roll = -ship.bank * 0.4;
+  if (isTunnel()) {
+    cam.p = v3(ship.p.x * TUNNEL_FOLLOW, ship.p.y * TUNNEL_FOLLOW + CAM_UP, ship.p.z - CAM_BACK);
+    cam.roll = 0;
+  } else {
+    cam.p = addS(addS(ship.p, b.f, -CAM_BACK), b.u, CAM_UP);
+    cam.roll = -ship.bank * 0.4;
+  }
 }
 // world point → [screenX, screenY, pixels per world unit at that depth, depth] or null
 function proj(p) {
@@ -348,19 +380,22 @@ function projDir(d) {
   return [CX + dot(d, cam.r) / z * F, CY - dot(d, cam.u) / z * F, F / z];
 }
 const camDepth = p => dot(sub(p, cam.p), cam.f);
-const fogAlpha = z => clamp((FOG - z) / 30, 0, 1) * (z < 1.5 ? clamp((z - 0.4) / 1.1, 0, 1) : 1);
+const fogAlpha = z => (isTunnel() ? clamp((TUNNEL_AHEAD + CAM_BACK - z) / 14, 0, 1) : clamp((FOG - z) / 30, 0, 1))
+  * (z < 1.5 ? clamp((z - 0.4) / 1.1, 0, 1) : 1);
 
 function reset() {
   Object.assign(G, {
     t: 0, dist: 0, bonus: 0, speed: 16, hull: 3, inv: 0, combo: 0, shake: 0, red: 0,
     ents: [], bolts: [], parts: [], pops: [], fireCd: 0, ring: null, ringWait: 1.2,
     rings: 0, kills: 0, gems: 0,
-    timers: { gem: 1.5, repair: 22 }
+    timers: { gem: 1.5, repair: 22, rock: 0.8 }
   });
-  Object.assign(ship, { p: v3(), prev: v3(), yaw: 0, pitch: 0, yawRate: 0, pitchRate: 0, bank: 0 });
+  G.mode = settings.mode;
+  resize();
+  Object.assign(ship, { p: v3(), prev: v3(), yaw: 0, pitch: 0, yawRate: 0, pitchRate: 0, bank: 0, vx: 0, vy: 0 });
   input.tx = input.ty = 0;
   updateCamera();
-  for (let i = 0; i < 55; i++) spawnRock(rand(28, 115), 1.3);
+  if (!isTunnel()) for (let i = 0; i < 55; i++) spawnRock(rand(28, 115), 1.3);
 }
 
 // sky: fixed stars, a sun, a ringed planet and nebulae at infinity
@@ -548,7 +583,7 @@ cv.addEventListener('pointermove', e => {
 const endPtr = e => {
   if (input.ptr && input.ptr.id === e.pointerId) {
     input.ptr = null; input.firing = false;
-    if (input.mode === 'touch') input.tx = input.ty = 0; // let go to fly straight
+    if (input.mode === 'touch' && !isTunnel()) input.tx = input.ty = 0; // let go to fly straight
   }
 };
 cv.addEventListener('pointerup', endPtr);
@@ -570,7 +605,11 @@ addEventListener('keyup', e => { if (KEYMAP[e.code]) input.keys[KEYMAP[e.code]] 
 function readInput(dt) {
   if (input.mode === 'tilt') applyTilt();
   const k = input.keys, kx = (k.r ? 1 : 0) - (k.l ? 1 : 0), ky = (k.d ? 1 : 0) - (k.u ? 1 : 0);
-  if (kx || ky) {
+  if ((kx || ky) && isTunnel()) {
+    // tunnel: keys nudge the ship's position and it stays put when released
+    input.tx = clamp(input.tx + kx * dt * 2, -1, 1);
+    input.ty = clamp(input.ty + ky * dt * 2, -1, 1);
+  } else if (kx || ky) {
     input.usingKeys = true;
     input.tx += (kx - input.tx) * Math.min(1, dt * 6);
     input.ty += (ky - input.ty) * Math.min(1, dt * 6);
@@ -588,21 +627,51 @@ function aheadPoint(minD, maxD, cone) {
   return addS(ship.p, dir, rand(minD, maxD));
 }
 function spawnRock(dist, cone) {
-  const p = aheadPoint(dist, dist + 10, cone), r = rand(0.6, 2.0);
-  if (G.ring && len(sub(p, G.ring.p)) < G.ring.R + r + 2) return;
+  makeRock(aheadPoint(dist, dist + 10, cone), rand(0.6, 2.0), v3(rand(-0.6, 0.6), rand(-0.6, 0.6), rand(-0.6, 0.6)));
+}
+function makeRock(p, r, v) {
+  if (G.ring) {
+    const d = sub(p, G.ring.p);
+    // keep the ring's flight line clear: in the tunnel that means anything lined up just behind it too
+    if (isTunnel() ? (Math.abs(d.z) < 14 && Math.hypot(d.x, d.y) < G.ring.R + r + 0.5) : len(d) < G.ring.R + r + 2) return;
+  }
   const n = 7 + (Math.random() * 5 | 0), verts = [], craters = [];
   for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2, m = rand(0.72, 1.08); verts.push(Math.cos(a) * m, Math.sin(a) * m); }
   for (let i = 0; i < 3; i++) craters.push(rand(-0.42, 0.42), rand(-0.42, 0.42), rand(0.1, 0.22));
-  G.ents.push({ k: 'rock', p, v: v3(rand(-0.6, 0.6), rand(-0.6, 0.6), rand(-0.6, 0.6)), r, rot: rand(0, 6.28), vr: rand(-1.2, 1.2),
+  G.ents.push({ k: 'rock', p, v, r, rot: rand(0, 6.28), vr: rand(-1.2, 1.2),
     verts, craters, hp: r > 1.3 ? 2 : 1, hue: rand(14, 34), flash: 0 });
 }
+// tunnel spawns: everything appears 80 units ahead inside the box
+const TUNNEL_AHEAD = 80;
+function boxPoint(scale, dz = 0) {
+  return v3(rand(-BX, BX) * scale, rand(-BY, BY) * scale, ship.p.z + TUNNEL_AHEAD + dz);
+}
+function spawnTunnelRock() {
+  let p = boxPoint(1.15);
+  if (Math.random() < 0.3) p = v3(ship.p.x + rand(-0.8, 0.8), ship.p.y + rand(-0.8, 0.8), p.z); // aimed at you
+  makeRock(p, rand(0.6, 1.6), v3());
+}
+function spawnTunnelGems() {
+  const start = boxPoint(0.8), dx = rand(-0.45, 0.45), dy = rand(-0.45, 0.45), n = 4 + (Math.random() * 3 | 0);
+  for (let i = 0; i < n; i++) {
+    G.ents.push({ k: 'gem', p: v3(clamp(start.x + dx * i, -BX, BX), clamp(start.y + dy * i, -BY, BY), start.z + i * 3.2), r: 0.38, spin: i * 0.7 });
+  }
+}
+function spawnTunnelRing() {
+  const p = boxPoint(0.75), R = 1.55;
+  G.ents = G.ents.filter(e => !(e.k === 'rock' && Math.abs(e.p.z - p.z) < 8 && Math.hypot(e.p.x - p.x, e.p.y - p.y) < e.r + R + 0.5));
+  G.ring = { k: 'ring', p, n: v3(0, 0, -1), a: v3(1, 0, 0), b: v3(0, 1, 0), R, spin: 0, state: 0, t: 0 };
+  G.ents.push(G.ring);
+}
 function spawnGems() {
+  if (isTunnel()) return spawnTunnelGems();
   const b = shipBasis(), start = aheadPoint(50, 75, 0.7);
   const step = norm(addS(addS(b.f, b.r, rand(-1, 1)), b.u, rand(-0.6, 0.6)));
   const n = 5 + (Math.random() * 3 | 0);
   for (let i = 0; i < n; i++) G.ents.push({ k: 'gem', p: addS(start, step, i * 2.6), r: 0.42, spin: i * 0.7 });
 }
 function spawnRing() {
+  if (isTunnel()) return spawnTunnelRing();
   const p = aheadPoint(55, 75, 0.55), R = 2.3;
   const n = norm(sub(ship.p, p));
   const a = norm(cross(n, Math.abs(n.y) < 0.9 ? v3(0, 1, 0) : v3(1, 0, 0))), b = cross(n, a);
@@ -611,9 +680,14 @@ function spawnRing() {
   G.ents.push(G.ring);
 }
 function spawnRepair() {
-  G.ents.push({ k: 'repair', p: aheadPoint(55, 75, 0.6), r: 0.55, spin: 0 });
+  G.ents.push({ k: 'repair', p: isTunnel() ? boxPoint(0.7) : aheadPoint(55, 75, 0.6), r: 0.55, spin: 0 });
 }
 function maintainWorld(dt) {
+  if (isTunnel()) {
+    G.ents = G.ents.filter(e => e === G.ring || e.p.z > cam.p.z + 0.4);
+    if ((G.timers.rock -= dt) <= 0) { spawnTunnelRock(); G.timers.rock = Math.max(0.13, 0.62 - (G.t || 0) * 0.005) * rand(0.6, 1.4); }
+    return;
+  }
   const keep = 150;
   G.ents = G.ents.filter(e => e === G.ring || len(sub(e.p, ship.p)) < keep);
   const target = Math.min(120, 55 + (G.t || 0) * 0.8);
@@ -676,7 +750,7 @@ function ringDone(success) {
     if (G.combo > 0) pop('Combo lost', '#ff4d6d');
     G.combo = 0; sfx.miss();
   }
-  G.ring = null; G.ringWait = 0.6;
+  G.ring = null; G.ringWait = isTunnel() ? rand(0.3, 1.5) : 0.6;
 }
 function checkRing() {
   const ring = G.ring;
@@ -696,6 +770,18 @@ function checkRing() {
 
 function moveShip(dt, steer) {
   ship.prev = v3(ship.p.x, ship.p.y, ship.p.z);
+  if (isTunnel()) {
+    // tilt sets where in the tunnel the ship sits; it glides there
+    const tx = (steer ? input.tx : Math.sin(ambientT * 0.7) * 0.3) * BX;
+    const ty = (steer ? -input.ty : Math.sin(ambientT * 1.1) * 0.12 - 0.1) * BY;
+    ship.vx = (tx - ship.p.x) * 6; ship.vy = (ty - ship.p.y) * 6;
+    ship.p = v3(clamp(ship.p.x + ship.vx * dt, -BX, BX), clamp(ship.p.y + ship.vy * dt, -BY, BY), ship.p.z + G.speed * dt);
+    ship.yawRate = ship.pitchRate = 0;
+    ship.bank = clamp(ship.vx * 0.05, -0.65, 0.65);
+    updateCamera();
+    wrapDust();
+    return;
+  }
   if (steer) {
     const tY = input.tx * TURN, tP = -input.ty * TURN * 0.8;
     ship.yawRate += (tY - ship.yawRate) * Math.min(1, dt * 5);
@@ -779,6 +865,11 @@ function ambient(dt) {
     ship.pitchRate = Math.sin(ambientT * 0.17) * 0.06;
     moveShip(dt, false);
     maintainWorld(dt);
+    if (isTunnel()) {
+      // title-screen tunnel: rings keep coming and drop away once passed
+      if (G.ring && G.ring.p.z < ship.p.z) { G.ents = G.ents.filter(e => e !== G.ring); G.ring = null; G.ringWait = 1; }
+      if (!G.ring && (G.ringWait -= dt) <= 0) spawnRing();
+    }
   } else {
     moveShip(dt, false);
     ship.yawRate *= Math.exp(-dt * 2);
@@ -840,6 +931,26 @@ function drawPlanet(dir, ang, cols, ringed) {
   g.addColorStop(0, cols[0]); g.addColorStop(0.55, cols[1]); g.addColorStop(1, cols[2]);
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R, 0, 6.283); ctx.fill();
   if (ringed) { ctx.strokeStyle = 'rgba(210, 225, 240, 0.5)'; ctx.lineWidth = R * 0.18; ringPath(true); ctx.stroke(); }
+}
+
+function drawCorridor() {
+  if (!isTunnel()) return;
+  const gap = 12, ex = BX + 1.3, ey = BY + 1.3;
+  ctx.lineWidth = 1;
+  for (let z = Math.ceil((cam.p.z + 1.2) / gap) * gap; z < cam.p.z + TUNNEL_AHEAD; z += gap) {
+    const a = proj(v3(-ex, -ey, z)), b = proj(v3(ex, ey, z));
+    if (!a || !b) continue;
+    const d = z - cam.p.z, al = 0.2 * (1 - d / TUNNEL_AHEAD) * clamp((d - 1.2) / 4, 0, 1);
+    ctx.strokeStyle = `rgba(92, 225, 255, ${al})`;
+    ctx.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+  }
+  ctx.strokeStyle = 'rgba(92, 225, 255, 0.08)';
+  ctx.beginPath();
+  for (const [x, y] of [[-ex, -ey], [ex, -ey], [ex, ey], [-ex, ey]]) {
+    const a = proj(v3(x, y, cam.p.z + 1.5)), b = proj(v3(x, y, cam.p.z + TUNNEL_AHEAD));
+    if (a && b) { ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+  }
+  ctx.stroke();
 }
 
 function drawDust() {
@@ -989,7 +1100,7 @@ function shipScreen() {
 function drawShip() {
   const [sx, sy, s] = shipScreen(), u = s * 0.62;
   const bank = ship.bank;
-  const pitch = clamp(ship.pitchRate * 0.25, -0.3, 0.3);
+  const pitch = isTunnel() ? clamp(-ship.vy * 0.03, -0.3, 0.3) : clamp(ship.pitchRate * 0.25, -0.3, 0.3);
   const blink = G.state === 'playing' && G.inv > 0 && ((G.inv * 12) | 0) % 2;
   ctx.save();
   ctx.globalAlpha = blink ? 0.3 : 1;
@@ -1069,7 +1180,7 @@ const drawers = { rock: drawRock, ring: drawRing, gem: drawGem, repair: drawRepa
 // points to the active ring when it is off screen, with the distance to it
 function drawRingPointer() {
   const ring = G.ring;
-  if (!ring || G.state !== 'playing') return;
+  if (!ring || G.state !== 'playing' || isTunnel()) return;
   const d = sub(ring.p, cam.p), z = dot(d, cam.f), x = dot(d, cam.r), y = -dot(d, cam.u);
   let sx, sy, on = false;
   if (z > 0.3) {
@@ -1112,6 +1223,7 @@ function render() {
   ctx.translate(CX, CY); ctx.rotate(cam.roll); ctx.translate(-CX, -CY);
   if (sh > 0.3) ctx.translate((Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh);
   drawSky();
+  drawCorridor();
   drawDust();
   const list = [];
   for (const e of G.ents) list.push([camDepth(e.p), e]);
@@ -1179,7 +1291,7 @@ function show(name) {
   if (name === 'paused') $('pauseSettingsSlot').appendChild(settingsEl);
   else if (name === 'title') screens.title.querySelector('.panel').appendChild(settingsEl);
 }
-function updateBestLabel() { $('bestTitle').textContent = best ? `Best run: ${best.toLocaleString()}` : ''; }
+function updateBestLabel() { const b = bests[settings.mode]; $('bestTitle').textContent = b ? `Best ${settings.mode === 'tunnel' ? 'tunnel run' : 'open space'} score: ${b.toLocaleString()}` : ''; }
 
 let wakeLock = null;
 async function keepAwake() {
@@ -1240,13 +1352,13 @@ function gameOver() {
   burst(ship.p, '#5ce1ff', 24, 5, 0.08);
   G.shake = reduceMotion ? 0 : 26;
   sfx.over();
-  const sc = score(), isBest = sc > best;
-  if (isBest) { best = sc; store.set('best', best); }
+  const sc = score(), isBest = sc > bests[G.mode];
+  if (isBest) { bests[G.mode] = sc; store.set('best.' + G.mode, sc); }
   $('finalScore').textContent = sc.toLocaleString();
   $('finalDist').textContent = (G.dist / 10).toFixed(1) + ' km';
   $('finalRings').textContent = G.rings;
   $('finalKills').textContent = G.kills;
-  $('finalBest').textContent = best.toLocaleString();
+  $('finalBest').textContent = bests[G.mode].toLocaleString();
   $('newBest').hidden = !isBest;
   updateBestLabel();
   setTimeout(() => { if (G.state === 'over') show('over'); }, 1100);
@@ -1271,6 +1383,12 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // settings controls
+$(settings.mode === 'tunnel' ? 'modeTunnel' : 'modeOpen').checked = true;
+document.querySelectorAll('input[name="mode"]').forEach(r => r.addEventListener('change', () => {
+  settings.mode = r.value; store.set('settings', settings);
+  updateBestLabel();
+  if (G.state === 'title') { reset(); G.state = 'title'; }
+}));
 const sensIds = { low: 'sensLow', med: 'sensMed', high: 'sensHigh' };
 $(sensIds[settings.sens] || 'sensMed').checked = true;
 $('invert').checked = !!settings.flipY;

@@ -6,16 +6,21 @@ A spaceship flying game for phones, steered by tilting the device. It is a singl
 
 ## How to play
 
-Space is open in every direction: there are no walls, and you can turn all the way around.
+Pick a mode on the title screen. Each mode keeps its own best score.
 
-- **Tilt to fly.** When you press Launch, the way you are holding the phone becomes "neutral". Tilt left and right to turn. Tip the top edge away from you to climb and back toward you to dive. Hold a tilt to keep turning, and return to neutral to fly straight; the nose eases back to level on its own. Turn on *Reverse up/down* or *Reverse left/right* in settings if you prefer it the other way. If steering feels twitchy, try *Low* sensitivity. While flying, the dot in the bottom-left corner shows what the game reads from your tilt.
+- **Tunnel run:** fly down an asteroid tunnel. Tilt sets where the ship sits inside it: tilt left and right to slide sideways, tip the top edge away from you to rise and back toward you to drop. Rings come straight at you.
+- **Open space:** no walls, and you can turn all the way around. Tilt left and right to turn, tip the top edge away to climb and back to dive. Hold a tilt to keep turning and return to neutral to fly straight; the nose eases back to level on its own. One ring at a time appears ahead, and an arrow at the screen edge points to it with the distance when it is off screen.
+
+In both modes:
+
+- When you press Launch, the way you are holding the phone becomes "neutral". The ⊕ button resets neutral to your current grip, and rotating the screen resets it too.
 - **Hold a finger on the screen to fire** twin lasers. Large asteroids take two hits.
-- **Fly through the cyan rings.** One ring at a time appears somewhere ahead. When it is off screen, an arrow at the edge points to it with the distance. Each ring threaded in a row raises your score multiplier, up to ×6. Flying past a ring, or taking a hit, resets it.
+- Each ring threaded in a row raises your score multiplier, up to ×6. Missing a ring or taking a hit resets it.
 - Collect amber crystals for points and green repair kits to restore hull.
 - Red brackets mark asteroids that are on a collision course with you.
-- The ⊕ button resets neutral tilt to your current grip. Rotating the screen resets it too.
+- Turn on *Reverse up/down* or *Reverse left/right* in settings if you prefer it the other way. If steering feels twitchy, try *Low* sensitivity. While flying, the dot in the bottom-left corner shows what the game reads from your tilt.
 
-Without a tilt sensor, drag a finger to steer and let go to fly straight. On a computer, steer with the mouse or arrow keys/WASD, fire with click or Space, pause with P or Esc, and press C to recentre.
+Without a tilt sensor, drag a finger to steer (in open space, let go to fly straight). On a computer, steer with the mouse or arrow keys/WASD, fire with click or Space, pause with P or Esc, and press C to recentre.
 
 ## Running it on a phone
 
