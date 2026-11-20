@@ -191,7 +191,7 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
     <h1>Starship <span>Drift</span></h1>
     <div class="how">
       <div class="phone-demo" aria-hidden="true"><div></div></div>
-      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Tilt left and right to steer, tip the top edge away to climb and back to dive. Thread the rings, and hold a finger on the screen to fire.</p>
+      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Tilt left and right to turn, tip the top edge away to climb and back to dive. Space is open in every direction: follow the arrow to the next ring, and hold a finger on the screen to fire.</p>
     </div>
     <p class="keys">On a computer: steer with the <b>mouse</b> or <b>arrow keys</b>, fire with <b>click</b> or <b>Space</b>, pause with <b>P</b>.</p>
     <div class="stack">
@@ -278,53 +278,114 @@ let best = store.get('best', 0) | 0;
 const SENS = { low: 42, med: 30, high: 20 };   // degrees of tilt for full deflection
 
 // ---------- world constants ----------
-const SHIP_Z = 3, FAR = 80, SHIP_R = 0.55, CAM_FOLLOW = 0.35, CAM_LIFT = 0.9; // camera sits above the ship so it flies low on screen
+// World axes: x right, y up, z forward at the start heading. The ship flies freely; the
+// camera rides behind and above it, sharing its heading.
+const SHIP_R = 0.55, CAM_BACK = 3.6, CAM_UP = 0.95, FOG = 125, TURN = 1.5;
 const cv = $('game'), ctx = cv.getContext('2d');
-let W = 0, H = 0, DPR = 1, F = 1, CX = 0, CY = 0, BX = 4.2, BY = 5;
+let W = 0, H = 0, DPR = 1, F = 1, CX = 0, CY = 0;
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
   W = innerWidth; H = innerHeight;
   cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  BX = 4.2;
-  BY = BX * clamp(H / W, 0.6, 1.4);
-  const off = 1 - CAM_FOLLOW;
-  F = Math.min(0.40 * W * SHIP_Z / (off * BX), 0.34 * H * SHIP_Z / (off * BY));
-  CX = W / 2; CY = H * 0.46;
+  F = Math.min(W, H) * 0.85;
+  CX = W / 2; CY = H * 0.47;
 }
 addEventListener('resize', resize);
 resize();
 
-function proj(x, y, z) {
-  const s = F / z;
-  return [CX + (x - cam.x) * s, CY + (y - cam.y) * s, s];
+// ---------- vectors ----------
+const v3 = (x = 0, y = 0, z = 0) => ({ x, y, z });
+const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const sub = (a, b) => v3(a.x - b.x, a.y - b.y, a.z - b.z);
+const addS = (a, b, s) => v3(a.x + b.x * s, a.y + b.y * s, a.z + b.z * s);
+const len = a => Math.hypot(a.x, a.y, a.z);
+const norm = a => { const l = len(a) || 1; return v3(a.x / l, a.y / l, a.z / l); };
+const cross = (a, b) => v3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+function randDir() {
+  const z = rand(-1, 1), t = rand(0, 6.283), r = Math.sqrt(1 - z * z);
+  return v3(r * Math.cos(t), z, r * Math.sin(t));
+}
+// distance from c to the segment a→b
+function segDist(a, b, c) {
+  const ab = sub(b, a), l2 = dot(ab, ab);
+  const t = l2 ? clamp(dot(sub(c, a), ab) / l2, 0, 1) : 0;
+  return len(sub(c, addS(a, ab, t)));
 }
 
 // ---------- state ----------
-const G = { state: 'title', speed: 12, travel: 0 };
-const ship = { x: 0, y: 0, vx: 0, vy: 0 };
-const cam = { x: 0, y: 0 };
+const G = { state: 'title', speed: 12 };
+const ship = { p: v3(), prev: v3(), yaw: 0, pitch: 0, yawRate: 0, pitchRate: 0, bank: 0 };
+const cam = { p: v3(), f: v3(0, 0, 1), r: v3(1, 0, 0), u: v3(0, 1, 0), roll: 0 };
 const input = {
-  mode: 'mouse', tx: 0, ty: 0, keys: {}, firing: false, ptr: null,
+  mode: 'mouse', tx: 0, ty: 0, keys: {}, usingKeys: false, firing: false, ptr: null,
   tiltSeen: false, needCalib: true, L0: 0, P0: 0, sL: 0, sP: 0
 };
+
+function shipBasis() {
+  const cy = Math.cos(ship.yaw), sy = Math.sin(ship.yaw), cp = Math.cos(ship.pitch), sp = Math.sin(ship.pitch);
+  const f = v3(sy * cp, sp, cy * cp), r = v3(cy, 0, -sy);
+  return { f, r, u: cross(f, r) };
+}
+function updateCamera() {
+  const b = shipBasis();
+  cam.f = b.f; cam.r = b.r; cam.u = b.u;
+  cam.p = addS(addS(ship.p, b.f, -CAM_BACK), b.u, CAM_UP);
+  cam.roll = -ship.bank * 0.4;
+}
+// world point → [screenX, screenY, pixels per world unit at that depth, depth] or null
+function proj(p) {
+  const d = sub(p, cam.p), z = dot(d, cam.f);
+  if (z < 0.3) return null;
+  const s = F / z;
+  return [CX + dot(d, cam.r) * s, CY - dot(d, cam.u) * s, s, z];
+}
+// direction at infinity → screen point, or null when behind
+function projDir(d) {
+  const z = dot(d, cam.f);
+  if (z < 0.05) return null;
+  return [CX + dot(d, cam.r) / z * F, CY - dot(d, cam.u) / z * F, F / z];
+}
+const camDepth = p => dot(sub(p, cam.p), cam.f);
+const fogAlpha = z => clamp((FOG - z) / 30, 0, 1) * (z < 1.5 ? clamp((z - 0.4) / 1.1, 0, 1) : 1);
 
 function reset() {
   Object.assign(G, {
     t: 0, dist: 0, bonus: 0, speed: 16, hull: 3, inv: 0, combo: 0, shake: 0, red: 0,
-    ents: [], bolts: [], parts: [], pops: [], fireCd: 0,
+    ents: [], bolts: [], parts: [], pops: [], fireCd: 0, ring: null, ringWait: 1.2,
     rings: 0, kills: 0, gems: 0,
-    timers: { rock: 0.8, gem: 1.6, ring: 3, repair: 22 }
+    timers: { gem: 1.5, repair: 22 }
   });
-  ship.x = ship.y = ship.vx = ship.vy = 0;
+  Object.assign(ship, { p: v3(), prev: v3(), yaw: 0, pitch: 0, yawRate: 0, pitchRate: 0, bank: 0 });
   input.tx = input.ty = 0;
+  updateCamera();
+  for (let i = 0; i < 55; i++) spawnRock(rand(28, 115), 1.3);
 }
-reset();
-G.state = 'title';
 
-const stars = [];
-for (let i = 0; i < 240; i++) stars.push({ x: rand(-34, 34), y: rand(-34, 34), z: rand(1, FAR) });
+// sky: fixed stars, a sun, a ringed planet and nebulae at infinity
+const sky = [];
+for (let i = 0; i < 520; i++) sky.push({ d: randDir(), m: Math.pow(Math.random(), 3) * 1.8 + 0.4, tw: rand(0, 6.28) });
+const SUN = norm(v3(-0.55, 0.32, 0.77));
+const PLANET = norm(v3(0.62, -0.12, 0.78));
+const PLANET2 = norm(v3(-0.7, -0.35, -0.6));
+const NEBULAE = [
+  { d: norm(v3(0.2, 0.45, 1)), r: 0.9, c: '120, 70, 200' },
+  { d: norm(v3(-0.9, -0.2, 0.2)), r: 1.1, c: '30, 130, 170' },
+  { d: norm(v3(0.6, 0.1, -0.8)), r: 1.0, c: '200, 70, 120' },
+  { d: norm(v3(-0.1, -0.6, -0.8)), r: 0.8, c: '60, 160, 130' }
+];
+// drifting dust close to the ship shows speed and turning
+const dust = [];
+for (let i = 0; i < 150; i++) dust.push(v3(rand(-25, 25), rand(-25, 25), rand(-25, 25)));
+function wrapDust() {
+  for (const d of dust) {
+    for (const k of ['x', 'y', 'z']) {
+      const rel = d[k] - ship.p[k];
+      if (rel > 25) d[k] -= 50; else if (rel < -25) d[k] += 50;
+    }
+  }
+}
 
 // ---------- audio ----------
 let AC = null, noiseBuf = null, hum = null;
@@ -476,6 +537,7 @@ cv.addEventListener('pointerdown', e => {
 cv.addEventListener('pointermove', e => {
   if (G.state !== 'playing') return;
   if (input.mode === 'mouse' && e.pointerType === 'mouse') {
+    input.usingKeys = false;
     input.tx = clamp((e.clientX - CX) / (W * 0.38), -1, 1);
     input.ty = clamp((e.clientY - CY) / (H * 0.38), -1, 1);
   } else if (input.mode === 'touch' && input.ptr && input.ptr.id === e.pointerId) {
@@ -483,7 +545,12 @@ cv.addEventListener('pointermove', e => {
     input.ty = clamp(input.ptr.ty + (e.clientY - input.ptr.y) / (H * 0.3), -1, 1);
   }
 });
-const endPtr = e => { if (input.ptr && input.ptr.id === e.pointerId) { input.ptr = null; input.firing = false; } };
+const endPtr = e => {
+  if (input.ptr && input.ptr.id === e.pointerId) {
+    input.ptr = null; input.firing = false;
+    if (input.mode === 'touch') input.tx = input.ty = 0; // let go to fly straight
+  }
+};
 cv.addEventListener('pointerup', endPtr);
 cv.addEventListener('pointercancel', endPtr);
 cv.addEventListener('contextmenu', e => e.preventDefault());
@@ -504,59 +571,71 @@ function readInput(dt) {
   if (input.mode === 'tilt') applyTilt();
   const k = input.keys, kx = (k.r ? 1 : 0) - (k.l ? 1 : 0), ky = (k.d ? 1 : 0) - (k.u ? 1 : 0);
   if (kx || ky) {
-    input.tx = clamp(input.tx + kx * dt * 2, -1, 1);
-    input.ty = clamp(input.ty + ky * dt * 2, -1, 1);
+    input.usingKeys = true;
+    input.tx += (kx - input.tx) * Math.min(1, dt * 6);
+    input.ty += (ky - input.ty) * Math.min(1, dt * 6);
+  } else if (input.usingKeys) {
+    input.tx *= Math.exp(-dt * 8); input.ty *= Math.exp(-dt * 8);
+    if (Math.abs(input.tx) + Math.abs(input.ty) < 0.01) { input.tx = input.ty = 0; input.usingKeys = false; }
   }
 }
 
 // ---------- spawning ----------
-function makeRock(x, y, z, r) {
+// a point ahead of the ship, within `cone` (in units of the forward vector) of the heading
+function aheadPoint(minD, maxD, cone) {
+  const b = shipBasis();
+  const dir = norm(addS(addS(b.f, b.r, rand(-cone, cone)), b.u, rand(-cone, cone) * 0.8));
+  return addS(ship.p, dir, rand(minD, maxD));
+}
+function spawnRock(dist, cone) {
+  const p = aheadPoint(dist, dist + 10, cone), r = rand(0.6, 2.0);
+  if (G.ring && len(sub(p, G.ring.p)) < G.ring.R + r + 2) return;
   const n = 7 + (Math.random() * 5 | 0), verts = [], craters = [];
   for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2, m = rand(0.72, 1.08); verts.push(Math.cos(a) * m, Math.sin(a) * m); }
   for (let i = 0; i < 3; i++) craters.push(rand(-0.42, 0.42), rand(-0.42, 0.42), rand(0.1, 0.22));
-  return { k: 'rock', x, y, z, r, rot: rand(0, 6.28), vr: rand(-1.4, 1.4), verts, craters, hp: r > 1.25 ? 2 : 1, hue: rand(14, 34), flash: 0 };
-}
-function nearRing(x, y, r) {
-  return G.ents.some(e => e.k === 'ring' && e.z > FAR - 8 && Math.hypot(e.x - x, e.y - y) < e.r + r + 0.4);
-}
-function spawnRock() {
-  let x, y;
-  if (Math.random() < 0.3) { x = ship.x + rand(-0.8, 0.8); y = ship.y + rand(-0.8, 0.8); }
-  else { x = rand(-BX - 0.6, BX + 0.6); y = rand(-BY - 0.6, BY + 0.6); }
-  const r = rand(0.6, 1.6);
-  if (nearRing(x, y, r)) return;
-  G.ents.push(makeRock(x, y, FAR, r));
+  G.ents.push({ k: 'rock', p, v: v3(rand(-0.6, 0.6), rand(-0.6, 0.6), rand(-0.6, 0.6)), r, rot: rand(0, 6.28), vr: rand(-1.2, 1.2),
+    verts, craters, hp: r > 1.3 ? 2 : 1, hue: rand(14, 34), flash: 0 });
 }
 function spawnGems() {
-  const n = 4 + (Math.random() * 3 | 0);
-  const x = rand(-BX * 0.8, BX * 0.8), y = rand(-BY * 0.8, BY * 0.8), dx = rand(-0.45, 0.45), dy = rand(-0.45, 0.45);
-  for (let i = 0; i < n; i++) G.ents.push({ k: 'gem', x: clamp(x + dx * i, -BX, BX), y: clamp(y + dy * i, -BY, BY), z: FAR + i * 3.2, r: 0.38, spin: i * 0.7 });
+  const b = shipBasis(), start = aheadPoint(50, 75, 0.7);
+  const step = norm(addS(addS(b.f, b.r, rand(-1, 1)), b.u, rand(-0.6, 0.6)));
+  const n = 5 + (Math.random() * 3 | 0);
+  for (let i = 0; i < n; i++) G.ents.push({ k: 'gem', p: addS(start, step, i * 2.6), r: 0.42, spin: i * 0.7 });
 }
 function spawnRing() {
-  const x = rand(-BX * 0.75, BX * 0.75), y = rand(-BY * 0.75, BY * 0.75);
-  G.ents = G.ents.filter(e => !(e.k === 'rock' && e.z > FAR - 8 && Math.hypot(e.x - x, e.y - y) < e.r + 2));
-  G.ents.push({ k: 'ring', x, y, z: FAR, r: 1.55, spin: 0, state: 0, t: 0 });
+  const p = aheadPoint(55, 75, 0.55), R = 2.3;
+  const n = norm(sub(ship.p, p));
+  const a = norm(cross(n, Math.abs(n.y) < 0.9 ? v3(0, 1, 0) : v3(1, 0, 0))), b = cross(n, a);
+  G.ents = G.ents.filter(e => !(e.k === 'rock' && len(sub(e.p, p)) < R + e.r + 2.5));
+  G.ring = { k: 'ring', p, n, a, b, R, spin: 0, state: 0, t: 0 };
+  G.ents.push(G.ring);
 }
 function spawnRepair() {
-  G.ents.push({ k: 'repair', x: rand(-BX * 0.7, BX * 0.7), y: rand(-BY * 0.7, BY * 0.7), z: FAR, r: 0.5, spin: 0 });
+  G.ents.push({ k: 'repair', p: aheadPoint(55, 75, 0.6), r: 0.55, spin: 0 });
+}
+function maintainWorld(dt) {
+  const keep = 150;
+  G.ents = G.ents.filter(e => e === G.ring || len(sub(e.p, ship.p)) < keep);
+  const target = Math.min(120, 55 + (G.t || 0) * 0.8);
+  let rocks = 0;
+  for (const e of G.ents) if (e.k === 'rock') rocks++;
+  for (let i = 0; rocks + i < target && i < 4; i++) spawnRock(rand(70, 115), 1.25);
 }
 
 // ---------- effects ----------
-function burst(x, y, z, color, n, power = 4, size = 0.08) {
+function burst(p, color, n, power = 4, size = 0.08) {
   for (let i = 0; i < n; i++) {
-    const a = rand(0, 6.28), sp = rand(0.3, 1) * power;
-    G.parts.push({ k: 'part', x, y, z, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: rand(-power, power), life: rand(0.4, 0.9), max: 0.9, color, size });
+    const d = randDir(), sp = rand(0.3, 1) * power;
+    G.parts.push({ k: 'part', p: v3(p.x, p.y, p.z), v: v3(d.x * sp, d.y * sp, d.z * sp), life: rand(0.4, 0.9), max: 0.9, color, size });
   }
 }
 function explode(e) {
-  burst(e.x, e.y, e.z, '#ffb547', 10 + e.r * 10 | 0, 5, 0.1);
-  burst(e.x, e.y, e.z, '#9a8270', 8 + e.r * 8 | 0, 3, 0.16);
+  burst(e.p, '#ffb547', 10 + e.r * 10 | 0, 5, 0.1);
+  burst(e.p, '#9a8270', 8 + e.r * 8 | 0, 3, 0.16);
   sfx.boom();
 }
-function pop(text, color) {
-  const [sx, sy] = proj(ship.x, ship.y, SHIP_Z);
-  G.pops.push({ text, color, x: sx, y: sy - 40, life: 1 });
-}
+let shipSX = 0, shipSY = 0;
+function pop(text, color) { G.pops.push({ text, color, x: shipSX, y: shipSY - 44, life: 1 }); }
 function addScore(n, color = '#ffb547') {
   const m = 1 + G.combo;
   G.bonus += n * m;
@@ -565,7 +644,11 @@ function addScore(n, color = '#ffb547') {
 
 // ---------- gameplay ----------
 function fire() {
-  G.bolts.push({ k: 'bolt', x: ship.x - 0.32, y: ship.y + 0.06, z: SHIP_Z + 0.4 }, { k: 'bolt', x: ship.x + 0.32, y: ship.y + 0.06, z: SHIP_Z + 0.4 });
+  const b = shipBasis();
+  for (const side of [-1, 1]) {
+    const p = addS(addS(ship.p, b.r, side * 0.32), b.u, -0.05);
+    G.bolts.push({ k: 'bolt', p, prev: p, dir: b.f, v: G.speed + 80, life: 1.4 });
+  }
   sfx.fire();
 }
 function damage() {
@@ -574,181 +657,223 @@ function damage() {
   G.combo = 0;
   buzz(G.hull > 0 ? 140 : [200, 80, 300]);
   sfx.hit();
-  burst(ship.x, ship.y, SHIP_Z, '#5ce1ff', 14, 4, 0.07);
+  burst(ship.p, '#5ce1ff', 14, 4, 0.07);
   if (G.hull <= 0) gameOver();
 }
 function hitRock(e) {
   e.hp--; e.flash = 0.12;
   if (e.hp <= 0) { e.dead = true; explode(e); G.kills++; addScore(25); }
-  else { sfx.tick(); burst(e.x, e.y, e.z + e.r * 0.5, '#ffd9a0', 6, 2, 0.06); }
+  else { sfx.tick(); burst(e.p, '#ffd9a0', 6, 2, 0.06); }
 }
-function collide(e) {
-  const d = Math.hypot(e.x - ship.x, e.y - ship.y);
-  if (e.k === 'rock') {
-    if (G.inv <= 0 && d < e.r * 0.85 + SHIP_R) { e.dead = true; explode(e); damage(); }
-  } else if (e.k === 'gem') {
-    if (d < e.r + 0.8) { e.dead = true; G.gems++; addScore(10); burst(e.x, e.y, e.z, '#ffb547', 8, 2.5, 0.06); sfx.gem(); }
-  } else if (e.k === 'ring') {
-    if (d < e.r - 0.1) {
-      e.state = 1; G.rings++; G.combo = Math.min(G.combo + 1, 5);
-      addScore(50, '#5ce1ff'); sfx.ring(); buzz(25);
-    } else {
-      e.state = -1;
-      if (G.combo > 0) pop('Combo lost', '#ff4d6d');
-      G.combo = 0; sfx.miss();
-    }
-  } else if (e.k === 'repair') {
-    if (d < e.r + 0.8) { e.dead = true; G.hull = Math.min(3, G.hull + 1); pop('Hull repaired', '#6dffb0'); sfx.repair(); burst(e.x, e.y, e.z, '#6dffb0', 12, 3, 0.07); }
+function ringDone(success) {
+  const ring = G.ring;
+  if (!ring) return;
+  ring.state = success ? 1 : -1;
+  if (success) {
+    G.rings++; G.combo = Math.min(G.combo + 1, 5);
+    addScore(50, '#5ce1ff'); sfx.ring(); buzz(25);
+  } else {
+    if (G.combo > 0) pop('Combo lost', '#ff4d6d');
+    G.combo = 0; sfx.miss();
   }
+  G.ring = null; G.ringWait = 0.6;
+}
+function checkRing() {
+  const ring = G.ring;
+  if (!ring) return;
+  const s0 = dot(sub(ship.prev, ring.p), ring.n), s1 = dot(sub(ship.p, ring.p), ring.n);
+  if (s0 > 0 && s1 <= 0) {
+    // crossed the ring's plane this frame: where?
+    const t = s0 / (s0 - s1), hit = addS(ship.prev, sub(ship.p, ship.prev), t);
+    const d = len(sub(hit, ring.p));
+    if (d < ring.R - 0.15) return ringDone(true);
+    if (d < ring.R + 10) return ringDone(false);
+  }
+  // left behind or far off: counts as a miss
+  const rel = sub(ring.p, ship.p);
+  if (dot(rel, shipBasis().f) < -12 || len(rel) > 140) ringDone(false);
+}
+
+function moveShip(dt, steer) {
+  ship.prev = v3(ship.p.x, ship.p.y, ship.p.z);
+  if (steer) {
+    const tY = input.tx * TURN, tP = -input.ty * TURN * 0.8;
+    ship.yawRate += (tY - ship.yawRate) * Math.min(1, dt * 5);
+    ship.pitchRate += (tP - ship.pitchRate) * Math.min(1, dt * 5);
+  }
+  ship.yaw += ship.yawRate * dt;
+  ship.pitch = clamp(ship.pitch + ship.pitchRate * dt, -1.25, 1.25);
+  // ease back toward level flight when not climbing or diving, so you never lose the horizon
+  if (Math.abs(input.ty) < 0.03) ship.pitch -= ship.pitch * Math.min(1, dt * 0.35);
+  ship.bank += (clamp(ship.yawRate * 0.5, -0.85, 0.85) - ship.bank) * Math.min(1, dt * 6);
+  ship.p = addS(ship.p, shipBasis().f, G.speed * dt);
+  updateCamera();
+  wrapDust();
 }
 
 function update(dt) {
   G.t += dt;
   G.speed = 16 + Math.min(34, G.t * 0.45);
-  const dz = G.speed * dt;
-  G.dist += dz * 0.5;
-  G.travel += dz;
+  G.dist += G.speed * dt * 0.5;
 
   readInput(dt);
-  const tx = input.tx * BX, ty = input.ty * BY;
-  ship.vx = (tx - ship.x) * 6; ship.vy = (ty - ship.y) * 6;
-  ship.x = clamp(ship.x + ship.vx * dt, -BX, BX);
-  ship.y = clamp(ship.y + ship.vy * dt, -BY, BY);
-  cam.x = ship.x * CAM_FOLLOW; cam.y = ship.y * CAM_FOLLOW - CAM_LIFT;
+  moveShip(dt, true);
+  maintainWorld(dt);
 
   const T = G.timers;
-  if ((T.rock -= dt) <= 0) { spawnRock(); T.rock = Math.max(0.13, 0.62 - G.t * 0.005) * rand(0.6, 1.4); }
-  if ((T.gem -= dt) <= 0) { spawnGems(); T.gem = rand(2.2, 3.6); }
-  if ((T.ring -= dt) <= 0) { spawnRing(); T.ring = rand(3.5, 5.5); }
+  if (!G.ring && (G.ringWait -= dt) <= 0) spawnRing();
+  if ((T.gem -= dt) <= 0) { spawnGems(); T.gem = rand(2.5, 4); }
   if ((T.repair -= dt) <= 0) { if (G.hull < 3) spawnRepair(); T.repair = rand(18, 26); }
 
   G.fireCd -= dt;
   if ((input.firing || input.keys.f) && G.fireCd <= 0) { fire(); G.fireCd = 0.16; }
 
   for (const e of G.ents) {
-    const pz = e.z;
-    e.z -= dz;
-    if (e.k === 'rock') { e.rot += e.vr * dt; if (e.flash > 0) e.flash -= dt; }
-    else e.spin += dt * 3;
-    if (e.k === 'ring' && e.state) e.t += dt;
-    if (!e.dead && pz > SHIP_Z && e.z <= SHIP_Z) collide(e);
+    if (e.k === 'rock') { e.p = addS(e.p, e.v, dt); e.rot += e.vr * dt; if (e.flash > 0) e.flash -= dt; }
+    else { e.spin += dt * 3; if (e.state) e.t += dt; }
+    if (e.dead || e.k === 'ring') continue;
+    const d = segDist(ship.prev, ship.p, e.p);
+    if (e.k === 'rock') {
+      if (G.inv <= 0 && d < e.r * 0.85 + SHIP_R) { e.dead = true; explode(e); damage(); }
+    } else if (e.k === 'gem') {
+      if (d < e.r + 0.85) { e.dead = true; G.gems++; addScore(10); burst(e.p, '#ffb547', 8, 2.5, 0.06); sfx.gem(); }
+    } else if (e.k === 'repair') {
+      if (d < e.r + 0.85) { e.dead = true; G.hull = Math.min(3, G.hull + 1); pop('Hull repaired', '#6dffb0'); sfx.repair(); burst(e.p, '#6dffb0', 12, 3, 0.07); }
+    }
   }
+  if (G.state === 'playing') checkRing();
 
-  const BOLT_V = 75;
   for (const b of G.bolts) {
-    const pz = b.z;
-    b.z += BOLT_V * dt;
+    b.prev = b.p; b.p = addS(b.p, b.dir, b.v * dt); b.life -= dt;
     for (const e of G.ents) {
       if (e.k !== 'rock' || e.dead) continue;
-      if (e.z + dz + e.r >= pz && e.z - e.r <= b.z && Math.hypot(e.x - b.x, e.y - b.y) < e.r + 0.18) {
-        b.dead = true; hitRock(e); break;
-      }
+      if (segDist(b.prev, b.p, e.p) < e.r + 0.2) { b.dead = true; hitRock(e); break; }
     }
-    if (b.z > FAR) b.dead = true;
+    if (b.life <= 0) b.dead = true;
   }
 
-  for (const p of G.parts) {
-    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt - dz; p.life -= dt;
-  }
-  for (const p of G.pops) { p.life -= dt * 0.9; p.y -= dt * 40; }
-
-  G.ents = G.ents.filter(e => !e.dead && e.z > 0.6);
+  tickEffects(dt);
+  G.ents = G.ents.filter(e => !e.dead && !(e.k === 'ring' && e.state && e.t > 1.2));
   G.bolts = G.bolts.filter(b => !b.dead);
-  G.parts = G.parts.filter(p => p.life > 0 && p.z > 0.6);
-  G.pops = G.pops.filter(p => p.life > 0);
 
   if (G.inv > 0) G.inv -= dt;
   if (G.red > 0) G.red -= dt;
   G.shake *= Math.exp(-dt * 7);
-  for (const s of stars) { s.z -= dz; if (s.z < 1) { s.z += FAR; s.x = rand(-34, 34); s.y = rand(-34, 34); } }
+}
+function tickEffects(dt) {
+  for (const p of G.parts) { p.p = addS(p.p, p.v, dt); p.life -= dt; }
+  for (const p of G.pops) { p.life -= dt * 0.9; p.y -= dt * 40; }
+  G.parts = G.parts.filter(p => p.life > 0);
+  G.pops = G.pops.filter(p => p.life > 0);
 }
 
 let ambientT = 0;
 function ambient(dt) {
   ambientT += dt;
-  const v = G.state === 'paused' ? 0 : G.state === 'over' ? 6 : 12;
+  const v = G.state === 'paused' ? 0 : G.state === 'over' ? 5 : 12;
   G.speed += (v - G.speed) * Math.min(1, dt * 2);
-  const dz = G.speed * dt;
-  G.travel += dz;
+  if (G.state === 'paused') return;
   if (G.state === 'title') {
-    const tx = Math.sin(ambientT * 0.7) * 1.2, ty = Math.sin(ambientT * 1.1) * 0.5 + 0.6;
-    ship.vx = (tx - ship.x) * 3; ship.vy = (ty - ship.y) * 3;
-    ship.x += ship.vx * dt; ship.y += ship.vy * dt;
-    cam.x = ship.x * CAM_FOLLOW; cam.y = ship.y * CAM_FOLLOW - CAM_LIFT;
+    // lazy cruise for the title screen
+    ship.yawRate += (Math.sin(ambientT * 0.25) * 0.35 - ship.yawRate) * Math.min(1, dt * 2);
+    ship.pitchRate = Math.sin(ambientT * 0.17) * 0.06;
+    moveShip(dt, false);
+    maintainWorld(dt);
+  } else {
+    moveShip(dt, false);
+    ship.yawRate *= Math.exp(-dt * 2);
   }
-  if (G.state !== 'paused') {
-    for (const s of stars) { s.z -= dz; if (s.z < 1) { s.z += FAR; s.x = rand(-34, 34); s.y = rand(-34, 34); } }
-    for (const e of G.ents) { e.z -= dz; if (e.k === 'rock') e.rot += e.vr * dt; else e.spin += dt * 3; }
-    for (const p of G.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt - dz; p.life -= dt; }
-    G.ents = G.ents.filter(e => e.z > 0.6);
-    G.parts = G.parts.filter(p => p.life > 0 && p.z > 0.6);
-    G.shake *= Math.exp(-dt * 7);
-    if (G.red > 0) G.red -= dt;
-  }
+  for (const e of G.ents) { if (e.k === 'rock') { e.p = addS(e.p, e.v, dt); e.rot += e.vr * dt; } else e.spin += dt * 3; }
+  tickEffects(dt);
+  G.shake *= Math.exp(-dt * 7);
+  if (G.red > 0) G.red -= dt;
 }
 
 // ---------- rendering ----------
-function depthAlpha(z) {
-  const far = clamp((FAR - z) / 14, 0, 1);
-  const near = z < SHIP_Z ? clamp((z - 0.6) / (SHIP_Z - 0.6), 0, 1) * 0.55 : 1;
-  return far * near;
-}
-
-function drawBackground() {
+function drawSky() {
   ctx.fillStyle = '#05060f';
-  ctx.fillRect(0, 0, W, H);
-  const px = -cam.x * F * 0.02, py = -cam.y * F * 0.02;
-  let g = ctx.createRadialGradient(W * 0.25 + px, H * 0.3 + py, 0, W * 0.25 + px, H * 0.3 + py, Math.max(W, H) * 0.6);
-  g.addColorStop(0, 'rgba(70, 40, 140, 0.32)'); g.addColorStop(1, 'rgba(70, 40, 140, 0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  g = ctx.createRadialGradient(W * 0.8 + px, H * 0.75 + py, 0, W * 0.8 + px, H * 0.75 + py, Math.max(W, H) * 0.5);
-  g.addColorStop(0, 'rgba(20, 110, 150, 0.25)'); g.addColorStop(1, 'rgba(20, 110, 150, 0)');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillRect(-W, -H, W * 3, H * 3);
+  const big = Math.max(W, H);
+  for (const n of NEBULAE) {
+    const q = projDir(n.d);
+    if (!q) continue;
+    const r = n.r * F;
+    const g = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], r);
+    g.addColorStop(0, `rgba(${n.c}, 0.32)`); g.addColorStop(1, `rgba(${n.c}, 0)`);
+    ctx.fillStyle = g; ctx.fillRect(q[0] - r, q[1] - r, r * 2, r * 2);
+  }
+  const now = performance.now() / 1000;
+  for (const s of sky) {
+    const q = projDir(s.d);
+    if (!q || q[0] < -big * 0.3 || q[0] > W + big * 0.3 || q[1] < -big * 0.3 || q[1] > H + big * 0.3) continue;
+    const a = 0.45 + 0.35 * Math.sin(now * 1.7 + s.tw);
+    ctx.fillStyle = `rgba(215, 225, 255, ${a})`;
+    ctx.fillRect(q[0] - s.m / 2, q[1] - s.m / 2, s.m, s.m);
+  }
+  // sun
+  let q = projDir(SUN);
+  if (q) {
+    const r = F * 0.5;
+    const g = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], r);
+    g.addColorStop(0, 'rgba(255, 245, 225, 1)'); g.addColorStop(0.06, 'rgba(255, 220, 160, 0.9)');
+    g.addColorStop(0.25, 'rgba(255, 170, 80, 0.18)'); g.addColorStop(1, 'rgba(255, 140, 60, 0)');
+    ctx.fillStyle = g; ctx.fillRect(q[0] - r, q[1] - r, r * 2, r * 2);
+  }
+  drawPlanet(PLANET, 0.2, ['#7fb7d9', '#2b4f7a', '#0d1a33'], true);
+  drawPlanet(PLANET2, 0.09, ['#e0a37a', '#8a4a35', '#2a1410'], false);
+}
+function drawPlanet(dir, ang, cols, ringed) {
+  const q = projDir(dir);
+  if (!q) return;
+  const R = ang * q[2], x = q[0], y = q[1];
+  if (x < -R * 3 || x > W + R * 3 || y < -R * 3 || y > H + R * 3) return;
+  const sun = projDir(SUN);
+  // light comes from the sun's side of the screen (or upper-left if the sun is behind)
+  let lx = -0.5, ly = -0.4;
+  if (sun) { const dx = sun[0] - x, dy = sun[1] - y, l = Math.hypot(dx, dy) || 1; lx = dx / l * 0.55; ly = dy / l * 0.55; }
+  const ringPath = (front) => {
+    ctx.beginPath();
+    ctx.ellipse(x, y, R * 2.1, R * 0.55, -0.35, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2);
+  };
+  if (ringed) { ctx.strokeStyle = 'rgba(210, 225, 240, 0.35)'; ctx.lineWidth = R * 0.18; ringPath(false); ctx.stroke(); }
+  const g = ctx.createRadialGradient(x + lx * R, y + ly * R, R * 0.1, x, y, R * 1.05);
+  g.addColorStop(0, cols[0]); g.addColorStop(0.55, cols[1]); g.addColorStop(1, cols[2]);
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R, 0, 6.283); ctx.fill();
+  if (ringed) { ctx.strokeStyle = 'rgba(210, 225, 240, 0.5)'; ctx.lineWidth = R * 0.18; ringPath(true); ctx.stroke(); }
 }
 
-function drawStars() {
+function drawDust() {
   ctx.lineCap = 'round';
-  const streak = Math.max(0.15, G.speed * 0.035);
-  for (const s of stars) {
-    const [x1, y1, sc] = proj(s.x, s.y, s.z);
-    if (x1 < -20 || x1 > W + 20 || y1 < -20 || y1 > H + 20) continue;
-    const [x2, y2] = proj(s.x, s.y, s.z + streak);
-    const a = clamp(1 - s.z / FAR, 0, 1) * 0.9;
-    ctx.strokeStyle = `rgba(205, 218, 255, ${a})`;
-    ctx.lineWidth = Math.max(0.7, sc * 0.035);
-    ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x1, y1); ctx.stroke();
+  const tail = Math.max(0.2, G.speed * 0.03);
+  for (const d of dust) {
+    const a = proj(d);
+    if (!a) continue;
+    const b = proj(addS(d, cam.f, tail));
+    if (!b) continue;
+    ctx.strokeStyle = `rgba(205, 218, 255, ${clamp(1 - a[3] / 25, 0, 1) * 0.8})`;
+    ctx.lineWidth = Math.max(0.7, a[2] * 0.03);
+    ctx.beginPath(); ctx.moveTo(b[0], b[1]); ctx.lineTo(a[0], a[1]); ctx.stroke();
   }
 }
 
-function drawCorridor() {
-  const gap = 12, off = G.travel % gap, ex = BX + 1.3, ey = BY + 1.3;
-  ctx.lineWidth = 1;
-  for (let z = gap - off; z < FAR; z += gap) {
-    if (z < 1.2) continue;
-    const a = 0.2 * (1 - z / FAR) * clamp((z - 1.2) / 4, 0, 1);
-    const [x1, y1] = proj(-ex, -ey, z), [x2, y2] = proj(ex, ey, z);
-    ctx.strokeStyle = `rgba(92, 225, 255, ${a})`;
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-  }
-  ctx.strokeStyle = 'rgba(92, 225, 255, 0.08)';
-  ctx.beginPath();
-  for (const [cx, cy] of [[-ex, -ey], [ex, -ey], [ex, ey], [-ex, ey]]) {
-    const [ax, ay] = proj(cx, cy, 1.5), [bx, by] = proj(cx, cy, FAR);
-    ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
-  }
-  ctx.stroke();
+function onCourse(e) {
+  const rel = sub(e.p, ship.p), along = dot(rel, cam.f);
+  if (along < 0 || along > G.speed * 1.6) return false;
+  return len(addS(rel, cam.f, -along)) < e.r * 0.85 + SHIP_R;
 }
 
 function drawRock(e) {
-  const [x, y, s] = proj(e.x, e.y, e.z), R = e.r * s;
-  if (R < 0.6 || x < -R * 2 || x > W + R * 2 || y < -R * 2 || y > H + R * 2) return;
-  ctx.globalAlpha = depthAlpha(e.z);
+  const q = proj(e.p);
+  if (!q) return;
+  const [x, y, s, z] = q, R = e.r * s;
+  if (R < 0.6 || x < -R * 2 - W * 0.3 || x > W * 1.3 + R * 2 || y < -R * 2 - H * 0.3 || y > H * 1.3 + R * 2) return;
+  ctx.globalAlpha = fogAlpha(z) * (z < CAM_BACK ? 0.5 : 1);
   ctx.save(); ctx.translate(x, y); ctx.rotate(e.rot);
   const v = e.verts;
   ctx.beginPath(); ctx.moveTo(v[0] * R, v[1] * R);
   for (let i = 2; i < v.length; i += 2) ctx.lineTo(v[i] * R, v[i + 1] * R);
   ctx.closePath();
-  ctx.rotate(-e.rot); // keep lighting fixed from upper-left
+  ctx.rotate(-e.rot);
   const g = ctx.createRadialGradient(-R * 0.4, -R * 0.45, R * 0.05, 0, 0, R * 1.15);
   g.addColorStop(0, e.flash > 0 ? '#fff1dc' : `hsl(${e.hue}, 20%, 52%)`);
   g.addColorStop(1, `hsl(${e.hue}, 25%, 11%)`);
@@ -759,9 +884,8 @@ function drawRock(e) {
   const c = e.craters;
   for (let i = 0; i < c.length; i += 3) { ctx.beginPath(); ctx.arc(c[i] * R, c[i + 1] * R, c[i + 2] * R, 0, 6.283); ctx.fill(); }
   ctx.restore();
-  // collision-course warning bracket
-  if (G.state === 'playing' && e.z > SHIP_Z && e.z < 34 && Math.hypot(e.x - ship.x, e.y - ship.y) < e.r * 0.85 + SHIP_R) {
-    const a = clamp((34 - e.z) / 20, 0, 1) * (0.55 + 0.45 * Math.sin(performance.now() / 70));
+  if (G.state === 'playing' && z > CAM_BACK && onCourse(e)) {
+    const a = clamp((50 - z) / 30, 0, 1) * (0.55 + 0.45 * Math.sin(performance.now() / 70));
     ctx.globalAlpha = a;
     ctx.strokeStyle = '#ff4d6d'; ctx.lineWidth = 2;
     const r = R * 1.25 + 4, k = r * 0.45;
@@ -775,34 +899,40 @@ function drawRock(e) {
 }
 
 function drawRing(e) {
-  const [x, y, s] = proj(e.x, e.y, e.z), R = e.r * s;
-  if (R < 1) return;
-  let a = depthAlpha(e.z);
-  let col = '92, 225, 255';
-  if (e.state === 1) { col = '109, 255, 176'; a *= clamp(1 - e.t * 1.5, 0, 1); }
-  else if (e.state === -1) { col = '255, 77, 109'; a *= clamp(1 - e.t * 1.5, 0, 1) * 0.7; }
-  const grow = e.state === 1 ? 1 + e.t * 0.6 : 1;
-  ctx.globalAlpha = a;
-  ctx.strokeStyle = `rgba(${col}, 0.18)`; ctx.lineWidth = Math.max(2, s * 0.35);
-  ctx.beginPath(); ctx.arc(x, y, R * grow, 0, 6.283); ctx.stroke();
-  ctx.strokeStyle = `rgba(${col}, 0.95)`; ctx.lineWidth = Math.max(1.2, s * 0.07);
-  ctx.beginPath(); ctx.arc(x, y, R * grow, 0, 6.283); ctx.stroke();
-  // rotating chevron marks
-  ctx.lineWidth = Math.max(1, s * 0.05);
-  ctx.beginPath();
-  for (let i = 0; i < 8; i++) {
-    const ang = e.spin * 0.4 + i * Math.PI / 4, r1 = R * grow * 1.12, r2 = R * grow * 1.24;
-    ctx.moveTo(x + Math.cos(ang) * r1, y + Math.sin(ang) * r1);
-    ctx.lineTo(x + Math.cos(ang) * r2, y + Math.sin(ang) * r2);
+  let col = '92, 225, 255', a = 1, grow = 1;
+  if (e.state === 1) { col = '109, 255, 176'; a = clamp(1 - e.t * 1.2, 0, 1); grow = 1 + e.t * 0.8; }
+  else if (e.state === -1) { col = '255, 77, 109'; a = clamp(1 - e.t * 1.2, 0, 1) * 0.7; }
+  const pts = [];
+  for (let i = 0; i <= 40; i++) {
+    const t = i / 40 * 6.283;
+    pts.push(proj(addS(addS(e.p, e.a, Math.cos(t) * e.R * grow), e.b, Math.sin(t) * e.R * grow)));
   }
-  ctx.stroke();
+  const c = proj(e.p);
+  if (c) a *= fogAlpha(c[3]);
+  if (a <= 0) return;
+  const s = c ? c[2] : 20;
+  const stroke = (w, alpha) => {
+    ctx.strokeStyle = `rgba(${col}, ${alpha})`; ctx.lineWidth = w;
+    ctx.beginPath();
+    for (let i = 1; i < pts.length; i++) {
+      const p0 = pts[i - 1], p1 = pts[i];
+      if (!p0 || !p1) continue;
+      ctx.moveTo(p0[0], p0[1]); ctx.lineTo(p1[0], p1[1]);
+    }
+    ctx.stroke();
+  };
+  ctx.globalAlpha = a;
+  stroke(Math.max(3, s * 0.5), 0.18);
+  stroke(Math.max(1.5, s * 0.1), 0.95);
   ctx.globalAlpha = 1;
 }
 
 function drawGem(e) {
-  const [x, y, s] = proj(e.x, e.y, e.z), R = e.r * s;
+  const q = proj(e.p);
+  if (!q) return;
+  const [x, y, s, z] = q, R = e.r * s;
   if (R < 0.6) return;
-  ctx.globalAlpha = depthAlpha(e.z);
+  ctx.globalAlpha = fogAlpha(z);
   const g = ctx.createRadialGradient(x, y, 0, x, y, R * 2.4);
   g.addColorStop(0, 'rgba(255, 181, 71, 0.45)'); g.addColorStop(1, 'rgba(255, 181, 71, 0)');
   ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R * 2.4, 0, 6.283); ctx.fill();
@@ -815,9 +945,11 @@ function drawGem(e) {
 }
 
 function drawRepair(e) {
-  const [x, y, s] = proj(e.x, e.y, e.z), R = e.r * s;
+  const q = proj(e.p);
+  if (!q) return;
+  const [x, y, s, z] = q, R = e.r * s;
   if (R < 0.6) return;
-  ctx.globalAlpha = depthAlpha(e.z);
+  ctx.globalAlpha = fogAlpha(z);
   const pulse = 1 + Math.sin(e.spin * 2) * 0.08;
   ctx.strokeStyle = '#6dffb0'; ctx.lineWidth = Math.max(1, R * 0.14);
   ctx.beginPath(); ctx.arc(x, y, R * pulse, 0, 6.283); ctx.stroke();
@@ -828,28 +960,36 @@ function drawRepair(e) {
 }
 
 function drawBolt(b) {
-  const [x1, y1, s] = proj(b.x, b.y, b.z), [x2, y2] = proj(b.x, b.y, Math.max(0.8, b.z - 2.2));
-  ctx.globalAlpha = clamp((FAR - b.z) / 20, 0, 1);
-  ctx.strokeStyle = 'rgba(92, 225, 255, 0.35)'; ctx.lineWidth = Math.max(2, s * 0.22);
-  ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x1, y1); ctx.stroke();
-  ctx.strokeStyle = '#e9fbff'; ctx.lineWidth = Math.max(1, s * 0.07);
-  ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x1, y1); ctx.stroke();
+  const a = proj(b.p), c = proj(addS(b.p, b.dir, -2.4));
+  if (!a || !c) return;
+  ctx.globalAlpha = clamp(b.life / 0.4, 0, 1);
+  ctx.strokeStyle = 'rgba(92, 225, 255, 0.35)'; ctx.lineWidth = Math.max(2, a[2] * 0.22);
+  ctx.beginPath(); ctx.moveTo(c[0], c[1]); ctx.lineTo(a[0], a[1]); ctx.stroke();
+  ctx.strokeStyle = '#e9fbff'; ctx.lineWidth = Math.max(1, a[2] * 0.07);
+  ctx.beginPath(); ctx.moveTo(c[0], c[1]); ctx.lineTo(a[0], a[1]); ctx.stroke();
   ctx.globalAlpha = 1;
 }
 
 function drawPart(p) {
-  if (p.z < 1.6) return;
-  const [x, y, s] = proj(p.x, p.y, p.z), r = Math.max(0.8, p.size * s);
-  ctx.globalAlpha = clamp(p.life / p.max, 0, 1) * depthAlpha(p.z);
+  const q = proj(p.p);
+  if (!q || q[3] < 1.2) return;
+  const r = Math.max(0.8, p.size * q[2]);
+  ctx.globalAlpha = clamp(p.life / p.max, 0, 1) * fogAlpha(q[3]);
   ctx.fillStyle = p.color;
-  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  ctx.fillRect(q[0] - r, q[1] - r, r * 2, r * 2);
   ctx.globalAlpha = 1;
 }
 
+// the ship slides a little toward the turn so you can see it carve
+function shipScreen() {
+  const q = proj(ship.p) || [CX, CY + CAM_UP * F / CAM_BACK, F / CAM_BACK];
+  return [q[0] + ship.yawRate * F * 0.06, q[1] - ship.pitchRate * F * 0.06, q[2]];
+}
+
 function drawShip() {
-  const [sx, sy, s] = proj(ship.x, ship.y, SHIP_Z), u = s * 0.62;
-  const bank = clamp(ship.vx * 0.05, -0.65, 0.65);
-  const pitch = clamp(ship.vy * 0.03, -0.3, 0.3);
+  const [sx, sy, s] = shipScreen(), u = s * 0.62;
+  const bank = ship.bank;
+  const pitch = clamp(ship.pitchRate * 0.25, -0.3, 0.3);
   const blink = G.state === 'playing' && G.inv > 0 && ((G.inv * 12) | 0) % 2;
   ctx.save();
   ctx.globalAlpha = blink ? 0.3 : 1;
@@ -924,23 +1064,67 @@ function drawShip() {
   ctx.globalAlpha = 1;
 }
 
-const SHIP_TOKEN = { k: 'ship', z: SHIP_Z };
 const drawers = { rock: drawRock, ring: drawRing, gem: drawGem, repair: drawRepair, bolt: drawBolt, part: drawPart, ship: drawShip };
 
-function render() {
-  const sh = G.shake || 0;
-  drawBackground();
+// points to the active ring when it is off screen, with the distance to it
+function drawRingPointer() {
+  const ring = G.ring;
+  if (!ring || G.state !== 'playing') return;
+  const d = sub(ring.p, cam.p), z = dot(d, cam.f), x = dot(d, cam.r), y = -dot(d, cam.u);
+  let sx, sy, on = false;
+  if (z > 0.3) {
+    sx = CX + x / z * F; sy = CY + y / z * F;
+    on = sx > 30 && sx < W - 30 && sy > 70 && sy < H - 50;
+  }
+  const dist = Math.round(len(sub(ring.p, ship.p)) * 10);
+  ctx.font = '600 12px "IBM Plex Mono", ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  if (on) {
+    ctx.fillStyle = 'rgba(92, 225, 255, 0.85)';
+    ctx.fillText(`${dist} m`, sx, sy - Math.max(18, ring.R * F / z) - 8);
+    return;
+  }
+  // direction on screen (behind the camera: still point the short way round)
+  let ax = x, ay = y;
+  if (z <= 0.3 && Math.hypot(ax, ay) < 0.01) ay = 1;
+  const l = Math.hypot(ax, ay) || 1; ax /= l; ay /= l;
+  const rx = W / 2 - 34, ry = H / 2 - 74;
+  const k = Math.min(rx / Math.abs(ax || 1e-6), ry / Math.abs(ay || 1e-6));
+  const px = W / 2 + ax * k, py = H / 2 + 20 + ay * k * 0.92;
+  const pulse = 0.7 + 0.3 * Math.sin(performance.now() / 160);
   ctx.save();
-  if (sh > 0.3) ctx.translate((Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh);
-  drawStars();
-  drawCorridor();
-  const list = G.ents.concat(G.bolts, G.parts);
-  if (G.state !== 'over') list.push(SHIP_TOKEN);
-  list.sort((a, b) => b.z - a.z);
-  for (const o of list) drawers[o.k](o);
+  ctx.translate(px, py); ctx.rotate(Math.atan2(ay, ax));
+  ctx.fillStyle = `rgba(92, 225, 255, ${pulse})`;
+  ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(-8, -10); ctx.lineTo(-3, 0); ctx.lineTo(-8, 10); ctx.closePath(); ctx.fill();
   ctx.restore();
+  ctx.fillStyle = 'rgba(92, 225, 255, 0.85)';
+  const label = `RING ${dist} m`, tw = ctx.measureText(label).width;
+  const gap = 24 + Math.abs(ax) * tw / 2;
+  ctx.fillText(label, px - ax * gap, py - ay * 22 + 4);
+}
 
-  // floating score text
+function render() {
+  ctx.fillStyle = '#05060f';
+  ctx.fillRect(0, 0, W, H);
+  const sh = G.shake || 0;
+  ctx.save();
+  // camera roll follows the bank, and shake on hits
+  ctx.translate(CX, CY); ctx.rotate(cam.roll); ctx.translate(-CX, -CY);
+  if (sh > 0.3) ctx.translate((Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh);
+  drawSky();
+  drawDust();
+  const list = [];
+  for (const e of G.ents) list.push([camDepth(e.p), e]);
+  for (const b of G.bolts) list.push([camDepth(b.p), b]);
+  for (const p of G.parts) list.push([camDepth(p.p), p]);
+  if (G.state !== 'over') list.push([CAM_BACK, { k: 'ship' }]);
+  list.sort((a, b) => b[0] - a[0]);
+  for (const [z, o] of list) if (z > 0.3) drawers[o.k](o);
+  ctx.restore();
+  [shipSX, shipSY] = shipScreen();
+
+  drawRingPointer();
+
   ctx.textAlign = 'center';
   ctx.font = '600 15px "IBM Plex Mono", ui-monospace, monospace';
   for (const p of G.pops) {
@@ -1052,8 +1236,8 @@ function recalibrate() {
 function gameOver() {
   G.state = 'over';
   input.firing = false; input.ptr = null;
-  burst(ship.x, ship.y, SHIP_Z + 0.5, '#ffb547', 40, 7, 0.12);
-  burst(ship.x, ship.y, SHIP_Z + 0.5, '#5ce1ff', 24, 5, 0.08);
+  burst(ship.p, '#ffb547', 40, 7, 0.12);
+  burst(ship.p, '#5ce1ff', 24, 5, 0.08);
   G.shake = reduceMotion ? 0 : 26;
   sfx.over();
   const sc = score(), isBest = sc > best;
@@ -1068,7 +1252,8 @@ function gameOver() {
   setTimeout(() => { if (G.state === 'over') show('over'); }, 1100);
 }
 function toTitle() {
-  G.state = 'title'; G.ents = []; G.bolts = []; G.pops = [];
+  reset();
+  G.state = 'title';
   show('title');
 }
 
@@ -1097,6 +1282,9 @@ $('invert').addEventListener('change', e => { settings.flipY = e.target.checked;
 $('sound').addEventListener('change', e => { settings.sound = e.target.checked; store.set('settings', settings); humUpdate(); });
 
 updateBestLabel();
+
+reset();
+G.state = 'title';
 
 // ---------- main loop ----------
 let last = performance.now();

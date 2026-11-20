@@ -6,14 +6,16 @@ A spaceship flying game for phones, steered by tilting the device. It is a singl
 
 ## How to play
 
-- **Tilt to steer.** When you press Launch, the way you are holding the phone becomes "neutral". Tilt left and right to steer. Tip the top edge away from you to climb and back toward you to dive. Turn on *Reverse up/down* or *Reverse left/right* in settings if you prefer it the other way. While flying, the dot in the bottom-left corner shows what the game reads from your tilt. If steering feels twitchy, try *Low* sensitivity.
+Space is open in every direction: there are no walls, and you can turn all the way around.
+
+- **Tilt to fly.** When you press Launch, the way you are holding the phone becomes "neutral". Tilt left and right to turn. Tip the top edge away from you to climb and back toward you to dive. Hold a tilt to keep turning, and return to neutral to fly straight; the nose eases back to level on its own. Turn on *Reverse up/down* or *Reverse left/right* in settings if you prefer it the other way. If steering feels twitchy, try *Low* sensitivity. While flying, the dot in the bottom-left corner shows what the game reads from your tilt.
 - **Hold a finger on the screen to fire** twin lasers. Large asteroids take two hits.
-- **Fly through the cyan rings.** Each ring in a row raises your score multiplier, up to ×6. Missing a ring or taking a hit resets it.
+- **Fly through the cyan rings.** One ring at a time appears somewhere ahead. When it is off screen, an arrow at the edge points to it with the distance. Each ring threaded in a row raises your score multiplier, up to ×6. Flying past a ring, or taking a hit, resets it.
 - Collect amber crystals for points and green repair kits to restore hull.
 - Red brackets mark asteroids that are on a collision course with you.
 - The ⊕ button resets neutral tilt to your current grip. Rotating the screen resets it too.
 
-Without a tilt sensor, drag a finger to steer. On a computer, steer with the mouse or arrow keys/WASD, fire with click or Space, pause with P or Esc, and press C to recentre.
+Without a tilt sensor, drag a finger to steer and let go to fly straight. On a computer, steer with the mouse or arrow keys/WASD, fire with click or Space, pause with P or Esc, and press C to recentre.
 
 ## Running it on a phone
 
