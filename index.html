@@ -1,0 +1,1068 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#05060f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Starship Drift</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: full-bleed canvas flight view, thin instrument HUD on top, centered glass panels for menus. */
+:root {
+  --void: #05060f;
+  --panel: rgba(10, 14, 32, 0.78);
+  --hull: #e8ecf7;
+  --dim: #8189ad;
+  --plasma: #5ce1ff;
+  --ion: #ffb547;
+  --hazard: #ff4d6d;
+  --mend: #6dffb0;
+  --line: rgba(92, 225, 255, 0.28);
+  --display: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body {
+  height: 100%; margin: 0; overflow: hidden;
+  background: var(--void); color: var(--hull);
+  font-family: var(--mono); font-size: 14px;
+  touch-action: none; overscroll-behavior: none;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+[hidden] { display: none !important; }
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* HUD */
+.hud {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 2;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 10px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  pointer-events: none;
+}
+.readout { display: grid; gap: 4px; }
+.label { font-size: 10px; letter-spacing: 0.18em; color: var(--dim); text-transform: uppercase; }
+.score { font-family: var(--display); font-weight: 700; font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.mult { color: var(--ion); font-weight: 600; font-size: 13px; min-height: 1.2em; font-variant-numeric: tabular-nums; }
+.hull { display: flex; gap: 4px; }
+.hull i { width: 22px; height: 7px; border: 1px solid var(--plasma); transform: skewX(-20deg); }
+.hull i.on { background: var(--plasma); box-shadow: 0 0 8px var(--plasma); }
+.hull.low i.on { background: var(--hazard); border-color: var(--hazard); box-shadow: 0 0 8px var(--hazard); }
+.hull.low i { border-color: var(--hazard); }
+.right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.btns { display: flex; gap: 8px; pointer-events: auto; }
+.icon-btn {
+  width: 40px; height: 40px; display: grid; place-items: center;
+  background: rgba(10, 14, 32, 0.55); border: 1px solid var(--line); border-radius: 10px;
+  color: var(--hull); cursor: pointer; touch-action: manipulation;
+}
+.icon-btn:focus-visible, .btn:focus-visible, .seg label:has(input:focus-visible), .toggle:has(input:focus-visible) { outline: 2px solid var(--ion); outline-offset: 2px; }
+.icon-btn svg { width: 18px; height: 18px; }
+.speed { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; letter-spacing: 0.1em; }
+
+/* Panels */
+.overlay {
+  position: fixed; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  padding-block: calc(env(safe-area-inset-top, 0px) + 16px) calc(env(safe-area-inset-bottom, 0px) + 16px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: radial-gradient(ellipse at center, rgba(5, 6, 15, 0.35), rgba(5, 6, 15, 0.8));
+  overflow-y: auto; touch-action: pan-y;
+}
+.panel {
+  width: min(420px, 100%); display: grid; gap: 18px;
+  padding: 24px 22px; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--panel); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  margin: auto;
+}
+h1, h2 { font-family: var(--display); margin: 0; text-wrap: balance; letter-spacing: 0.06em; text-transform: uppercase; }
+h1 { font-size: clamp(34px, 10vw, 46px); line-height: 0.95; }
+h1 span { display: block; color: var(--plasma); }
+h2 { font-size: 26px; }
+h2.bad { color: var(--hazard); }
+p { margin: 0; line-height: 1.55; color: #c3c9e3; }
+.how { display: grid; grid-template-columns: 64px 1fr; gap: 16px; align-items: center; }
+.phone-demo { width: 64px; height: 64px; display: grid; place-items: center; perspective: 200px; }
+.phone-demo div {
+  width: 30px; height: 52px; border: 2px solid var(--plasma); border-radius: 6px;
+  box-shadow: inset 0 0 10px rgba(92, 225, 255, 0.25);
+  animation: tilt 3.2s ease-in-out infinite;
+}
+@keyframes tilt {
+  0%, 100% { transform: rotateY(0) rotateX(0); }
+  20% { transform: rotateY(-28deg); }
+  40% { transform: rotateY(28deg); }
+  60% { transform: rotateX(28deg); }
+  80% { transform: rotateX(-28deg); }
+}
+.keys { font-size: 12px; color: var(--dim); line-height: 1.6; }
+.keys b { color: var(--hull); font-weight: 600; }
+
+.settings { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg label { position: relative; padding: 7px 12px; font-size: 12px; cursor: pointer; color: var(--dim); touch-action: manipulation; }
+.seg label + label { border-left: 1px solid var(--line); }
+.seg input { position: absolute; opacity: 0; pointer-events: none; }
+.seg label:has(input:checked) { background: var(--plasma); color: var(--void); font-weight: 600; }
+.toggle { position: relative; display: inline-flex; align-items: center; cursor: pointer; touch-action: manipulation; }
+.toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.toggle span { width: 42px; height: 24px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,0.04); position: relative; transition: background .15s; }
+.toggle span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--dim); transition: transform .15s, background .15s; }
+.toggle input:checked + span { background: rgba(92, 225, 255, 0.2); }
+.toggle input:checked + span::after { transform: translateX(18px); background: var(--plasma); }
+
+.btn {
+  font-family: var(--display); font-weight: 700; font-size: 18px; letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 14px 18px; border-radius: 12px; border: 0; cursor: pointer; touch-action: manipulation;
+  background: var(--ion); color: #1b1203; box-shadow: 0 0 24px rgba(255, 181, 71, 0.35);
+}
+.btn.ghost { background: transparent; color: var(--hull); border: 1px solid var(--line); box-shadow: none; font-size: 14px; padding: 11px 16px; }
+.stack { display: grid; gap: 10px; }
+.best { font-size: 12px; color: var(--dim); text-align: center; letter-spacing: 0.08em; }
+.stats { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; font-variant-numeric: tabular-nums; }
+.stats dt { color: var(--dim); font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; }
+.stats dd { margin: 0; text-align: right; font-weight: 600; }
+.stats .big { font-family: var(--display); font-size: 30px; color: var(--ion); }
+.newbest { color: var(--mend); font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 28px); z-index: 6;
+  transform: translateX(-50%); max-width: calc(100% - 32px);
+  padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel);
+  font-size: 13px; text-align: center; pointer-events: none;
+  opacity: 0; transition: opacity .25s;
+}
+.toast.show { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .phone-demo div { animation: none; }
+}
+</style>
+</head>
+<body>
+<canvas id="game" aria-label="Starship flight view"></canvas>
+
+<div class="hud" id="hud" hidden>
+  <div class="readout">
+    <span class="label">Score</span>
+    <span class="score" id="score">0</span>
+    <span class="mult" id="mult"></span>
+  </div>
+  <div class="right">
+    <div class="btns">
+      <button class="icon-btn" id="calBtn" aria-label="Set current tilt as neutral" title="Recalibrate tilt">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg>
+      </button>
+      <button class="icon-btn" id="pauseBtn" aria-label="Pause" title="Pause">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+      </button>
+    </div>
+    <span class="label">Hull</span>
+    <div class="hull" id="hull"><i></i><i></i><i></i></div>
+    <span class="speed" id="speed"></span>
+  </div>
+</div>
+
+<!-- Title -->
+<div class="overlay" id="titleScreen">
+  <div class="panel">
+    <h1>Starship <span>Drift</span></h1>
+    <div class="how">
+      <div class="phone-demo" aria-hidden="true"><div></div></div>
+      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Tilt to steer, thread the rings, and hold a finger on the screen to fire.</p>
+    </div>
+    <p class="keys">On a computer: steer with the <b>mouse</b> or <b>arrow keys</b>, fire with <b>click</b> or <b>Space</b>, pause with <b>P</b>.</p>
+    <div class="stack">
+      <button class="btn" id="startBtn">Launch</button>
+      <div class="best" id="bestTitle"></div>
+    </div>
+    <div class="settings" id="settings">
+      <div class="row">
+        <span class="label">Tilt sensitivity</span>
+        <div class="seg" role="radiogroup" aria-label="Tilt sensitivity">
+          <label><input type="radio" name="sens" id="sensLow" value="low">Low</label>
+          <label><input type="radio" name="sens" id="sensMed" value="med">Med</label>
+          <label><input type="radio" name="sens" id="sensHigh" value="high">High</label>
+        </div>
+      </div>
+      <div class="row">
+        <span class="label">Flight-stick pitch</span>
+        <label class="toggle" aria-label="Invert pitch, flight-stick style"><input type="checkbox" id="invert"><span></span></label>
+      </div>
+      <div class="row">
+        <span class="label">Sound</span>
+        <label class="toggle" aria-label="Sound"><input type="checkbox" id="sound"><span></span></label>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Pause -->
+<div class="overlay" id="pauseScreen" hidden>
+  <div class="panel">
+    <h2>Paused</h2>
+    <div class="stack">
+      <button class="btn" id="resumeBtn">Resume</button>
+      <button class="btn ghost" id="recalResumeBtn">Recalibrate and resume</button>
+      <button class="btn ghost" id="quitBtn">Quit to title</button>
+    </div>
+    <div id="pauseSettingsSlot"></div>
+  </div>
+</div>
+
+<!-- Game over -->
+<div class="overlay" id="overScreen" hidden>
+  <div class="panel">
+    <h2 class="bad">Hull breached</h2>
+    <dl class="stats">
+      <dt>Score</dt><dd class="big" id="finalScore">0</dd>
+      <dt>Distance</dt><dd id="finalDist">0 km</dd>
+      <dt>Rings threaded</dt><dd id="finalRings">0</dd>
+      <dt>Asteroids cleared</dt><dd id="finalKills">0</dd>
+      <dt>Best</dt><dd id="finalBest">0</dd>
+    </dl>
+    <div class="newbest" id="newBest" hidden>New personal best</div>
+    <div class="stack">
+      <button class="btn" id="againBtn">Fly again</button>
+      <button class="btn ghost" id="menuBtn">Title screen</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+'use strict';
+(() => {
+// ---------- utilities ----------
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const rand = (a, b) => a + Math.random() * (b - a);
+const wrap180 = a => ((a + 540) % 360) - 180;
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('starshipDrift.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('starshipDrift.' + k, JSON.stringify(v)); } catch (e) {} }
+};
+const settings = Object.assign({ sens: 'med', invert: false, sound: true }, store.get('settings', {}));
+let best = store.get('best', 0) | 0;
+const SENS = { low: 30, med: 20, high: 13 };   // degrees of tilt for full deflection
+
+// ---------- world constants ----------
+const SHIP_Z = 3, FAR = 80, SHIP_R = 0.55, CAM_FOLLOW = 0.55, CAM_LIFT = 0.9; // camera sits above the ship so it flies low on screen
+const cv = $('game'), ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1, F = 1, CX = 0, CY = 0, BX = 4.2, BY = 5;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  BX = 4.2;
+  BY = BX * clamp(H / W, 0.6, 1.4);
+  const off = 1 - CAM_FOLLOW;
+  F = Math.min(0.40 * W * SHIP_Z / (off * BX), 0.34 * H * SHIP_Z / (off * BY));
+  CX = W / 2; CY = H * 0.46;
+}
+addEventListener('resize', resize);
+resize();
+
+function proj(x, y, z) {
+  const s = F / z;
+  return [CX + (x - cam.x) * s, CY + (y - cam.y) * s, s];
+}
+
+// ---------- state ----------
+const G = { state: 'title', speed: 12, travel: 0 };
+const ship = { x: 0, y: 0, vx: 0, vy: 0 };
+const cam = { x: 0, y: 0 };
+const input = {
+  mode: 'mouse', tx: 0, ty: 0, keys: {}, firing: false, ptr: null,
+  tiltSeen: false, needCalib: true, L0: 0, P0: 0, sL: 0, sP: 0
+};
+
+function reset() {
+  Object.assign(G, {
+    t: 0, dist: 0, bonus: 0, speed: 16, hull: 3, inv: 0, combo: 0, shake: 0, red: 0,
+    ents: [], bolts: [], parts: [], pops: [], fireCd: 0,
+    rings: 0, kills: 0, gems: 0,
+    timers: { rock: 0.8, gem: 1.6, ring: 3, repair: 22 }
+  });
+  ship.x = ship.y = ship.vx = ship.vy = 0;
+  input.tx = input.ty = 0;
+}
+reset();
+G.state = 'title';
+
+const stars = [];
+for (let i = 0; i < 240; i++) stars.push({ x: rand(-34, 34), y: rand(-34, 34), z: rand(1, FAR) });
+
+// ---------- audio ----------
+let AC = null, noiseBuf = null, hum = null;
+function initAudio() {
+  try {
+    if (!AC) {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      noiseBuf = AC.createBuffer(1, AC.sampleRate, AC.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    if (AC.state === 'suspended') AC.resume();
+  } catch (e) { AC = null; }
+}
+function tone(f1, f2, dur, type = 'sine', vol = 0.12, delay = 0) {
+  if (!AC || !settings.sound) return;
+  const t = AC.currentTime + delay, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f1, t);
+  o.frequency.exponentialRampToValueAtTime(f2, t + dur);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  o.connect(g).connect(AC.destination);
+  o.start(t); o.stop(t + dur + 0.03);
+}
+function noise(dur, vol, freq) {
+  if (!AC || !settings.sound) return;
+  const t = AC.currentTime, s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  s.buffer = noiseBuf; f.type = 'lowpass';
+  f.frequency.setValueAtTime(freq, t); f.frequency.exponentialRampToValueAtTime(80, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  s.connect(f).connect(g).connect(AC.destination);
+  s.start(t); s.stop(t + dur + 0.03);
+}
+const sfx = {
+  fire: () => tone(1500, 380, 0.07, 'square', 0.025),
+  tick: () => tone(520, 380, 0.05, 'square', 0.04),
+  gem: () => { tone(1250, 1900, 0.08, 'sine', 0.1); tone(1880, 2500, 0.1, 'sine', 0.05, 0.05); },
+  ring: () => [523, 659, 784].forEach((f, i) => tone(f, f * 1.01, 0.14, 'triangle', 0.1, i * 0.06)),
+  miss: () => tone(260, 130, 0.25, 'sawtooth', 0.04),
+  boom: () => noise(0.35, 0.35, 1800),
+  hit: () => { noise(0.5, 0.6, 1100); tone(190, 40, 0.45, 'sawtooth', 0.12); },
+  repair: () => [392, 523, 784].forEach((f, i) => tone(f, f, 0.12, 'sine', 0.1, i * 0.07)),
+  over: () => { noise(1.2, 0.5, 900); tone(220, 30, 1.2, 'sawtooth', 0.1); }
+};
+function humStart() {
+  if (!AC || hum) return;
+  try {
+    const o = AC.createOscillator(), f = AC.createBiquadFilter(), g = AC.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 48;
+    f.type = 'lowpass'; f.frequency.value = 220;
+    g.gain.value = settings.sound ? 0.025 : 0;
+    o.connect(f).connect(g).connect(AC.destination); o.start();
+    hum = { o, f, g };
+  } catch (e) {}
+}
+function humStop() { if (hum) { try { hum.o.stop(); } catch (e) {} hum = null; } }
+function humUpdate() {
+  if (!hum) return;
+  const on = settings.sound && G.state === 'playing';
+  hum.g.gain.value = on ? 0.025 : 0;
+  hum.o.frequency.value = 40 + G.speed * 0.9;
+  hum.f.frequency.value = 160 + G.speed * 6;
+}
+function buzz(ms) { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} }
+
+// ---------- tilt input ----------
+function screenAngle() {
+  const a = (screen.orientation && typeof screen.orientation.angle === 'number')
+    ? screen.orientation.angle : (typeof window.orientation === 'number' ? window.orientation : 0);
+  return ((a % 360) + 360) % 360;
+}
+function onOrient(ev) {
+  if (ev.beta == null || ev.gamma == null) return;
+  input.tiltSeen = true;
+  const b = ev.beta, g = ev.gamma;
+  let L, P;
+  // Map device axes to screen axes so "right" and "up" follow the current screen rotation.
+  switch (screenAngle()) {
+    case 90: L = b; P = -g; break;
+    case 270: L = -b; P = g; break;
+    case 180: L = -g; P = -b; break;
+    default: L = g; P = b;
+  }
+  if (input.needCalib) {
+    input.L0 = L; input.P0 = P; input.sL = 0; input.sP = 0; input.needCalib = false;
+  }
+  const dL = wrap180(L - input.L0), dP = wrap180(P - input.P0);
+  input.sL += (dL - input.sL) * 0.45;
+  input.sP += (dP - input.sP) * 0.45;
+}
+addEventListener('deviceorientation', onOrient);
+const onRotate = () => { input.needCalib = true; if (G.state === 'playing' && input.mode === 'tilt') toast('Screen rotated. Neutral tilt reset.'); };
+if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', onRotate);
+else addEventListener('orientationchange', onRotate);
+
+async function requestTiltPermission() {
+  try {
+    const DOE = window.DeviceOrientationEvent;
+    if (DOE && typeof DOE.requestPermission === 'function') {
+      return (await DOE.requestPermission()) === 'granted';
+    }
+  } catch (e) { return false; }
+  return true;
+}
+const isTouchDevice = () => matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+
+function applyTilt() {
+  const m = SENS[settings.sens] || 20;
+  const dz = v => { const a = Math.abs(v); return a < 0.04 ? 0 : Math.sign(v) * (a - 0.04) / 0.96; };
+  input.tx = clamp(dz(input.sL / m), -1, 1);
+  input.ty = clamp(dz(input.sP / m) * (settings.invert ? -1 : 1), -1, 1);
+}
+
+// ---------- pointer + keyboard ----------
+cv.addEventListener('pointerdown', e => {
+  if (G.state !== 'playing') return;
+  e.preventDefault();
+  input.firing = true;
+  input.ptr = { id: e.pointerId, x: e.clientX, y: e.clientY, tx: input.tx, ty: input.ty };
+  try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+});
+cv.addEventListener('pointermove', e => {
+  if (G.state !== 'playing') return;
+  if (input.mode === 'mouse' && e.pointerType === 'mouse') {
+    input.tx = clamp((e.clientX - CX) / (W * 0.38), -1, 1);
+    input.ty = clamp((e.clientY - CY) / (H * 0.38), -1, 1);
+  } else if (input.mode === 'touch' && input.ptr && input.ptr.id === e.pointerId) {
+    input.tx = clamp(input.ptr.tx + (e.clientX - input.ptr.x) / (W * 0.35), -1, 1);
+    input.ty = clamp(input.ptr.ty + (e.clientY - input.ptr.y) / (H * 0.3), -1, 1);
+  }
+});
+const endPtr = e => { if (input.ptr && input.ptr.id === e.pointerId) { input.ptr = null; input.firing = false; } };
+cv.addEventListener('pointerup', endPtr);
+cv.addEventListener('pointercancel', endPtr);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+const KEYMAP = { ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r', ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd', Space: 'f' };
+addEventListener('keydown', e => {
+  if (KEYMAP[e.code]) {
+    if (G.state === 'playing') e.preventDefault();
+    input.keys[KEYMAP[e.code]] = true;
+  }
+  if (e.code === 'KeyP' || e.code === 'Escape') { if (G.state === 'playing') pause(); else if (G.state === 'paused') resume(); }
+  if (e.code === 'KeyC' && G.state === 'playing') recalibrate();
+  if ((e.code === 'Enter') && (G.state === 'title' || G.state === 'over') && document.activeElement === document.body) start();
+});
+addEventListener('keyup', e => { if (KEYMAP[e.code]) input.keys[KEYMAP[e.code]] = false; });
+
+function readInput(dt) {
+  if (input.mode === 'tilt') applyTilt();
+  const k = input.keys, kx = (k.r ? 1 : 0) - (k.l ? 1 : 0), ky = (k.d ? 1 : 0) - (k.u ? 1 : 0);
+  if (kx || ky) {
+    input.tx = clamp(input.tx + kx * dt * 2, -1, 1);
+    input.ty = clamp(input.ty + ky * dt * 2, -1, 1);
+  }
+}
+
+// ---------- spawning ----------
+function makeRock(x, y, z, r) {
+  const n = 7 + (Math.random() * 5 | 0), verts = [], craters = [];
+  for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2, m = rand(0.72, 1.08); verts.push(Math.cos(a) * m, Math.sin(a) * m); }
+  for (let i = 0; i < 3; i++) craters.push(rand(-0.42, 0.42), rand(-0.42, 0.42), rand(0.1, 0.22));
+  return { k: 'rock', x, y, z, r, rot: rand(0, 6.28), vr: rand(-1.4, 1.4), verts, craters, hp: r > 1.25 ? 2 : 1, hue: rand(14, 34), flash: 0 };
+}
+function nearRing(x, y, r) {
+  return G.ents.some(e => e.k === 'ring' && e.z > FAR - 8 && Math.hypot(e.x - x, e.y - y) < e.r + r + 0.4);
+}
+function spawnRock() {
+  let x, y;
+  if (Math.random() < 0.3) { x = ship.x + rand(-0.8, 0.8); y = ship.y + rand(-0.8, 0.8); }
+  else { x = rand(-BX - 0.6, BX + 0.6); y = rand(-BY - 0.6, BY + 0.6); }
+  const r = rand(0.6, 1.6);
+  if (nearRing(x, y, r)) return;
+  G.ents.push(makeRock(x, y, FAR, r));
+}
+function spawnGems() {
+  const n = 4 + (Math.random() * 3 | 0);
+  const x = rand(-BX * 0.8, BX * 0.8), y = rand(-BY * 0.8, BY * 0.8), dx = rand(-0.45, 0.45), dy = rand(-0.45, 0.45);
+  for (let i = 0; i < n; i++) G.ents.push({ k: 'gem', x: clamp(x + dx * i, -BX, BX), y: clamp(y + dy * i, -BY, BY), z: FAR + i * 3.2, r: 0.38, spin: i * 0.7 });
+}
+function spawnRing() {
+  const x = rand(-BX * 0.75, BX * 0.75), y = rand(-BY * 0.75, BY * 0.75);
+  G.ents = G.ents.filter(e => !(e.k === 'rock' && e.z > FAR - 8 && Math.hypot(e.x - x, e.y - y) < e.r + 2));
+  G.ents.push({ k: 'ring', x, y, z: FAR, r: 1.55, spin: 0, state: 0, t: 0 });
+}
+function spawnRepair() {
+  G.ents.push({ k: 'repair', x: rand(-BX * 0.7, BX * 0.7), y: rand(-BY * 0.7, BY * 0.7), z: FAR, r: 0.5, spin: 0 });
+}
+
+// ---------- effects ----------
+function burst(x, y, z, color, n, power = 4, size = 0.08) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, 6.28), sp = rand(0.3, 1) * power;
+    G.parts.push({ k: 'part', x, y, z, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, vz: rand(-power, power), life: rand(0.4, 0.9), max: 0.9, color, size });
+  }
+}
+function explode(e) {
+  burst(e.x, e.y, e.z, '#ffb547', 10 + e.r * 10 | 0, 5, 0.1);
+  burst(e.x, e.y, e.z, '#9a8270', 8 + e.r * 8 | 0, 3, 0.16);
+  sfx.boom();
+}
+function pop(text, color) {
+  const [sx, sy] = proj(ship.x, ship.y, SHIP_Z);
+  G.pops.push({ text, color, x: sx, y: sy - 40, life: 1 });
+}
+function addScore(n, color = '#ffb547') {
+  const m = 1 + G.combo;
+  G.bonus += n * m;
+  pop('+' + n * m, color);
+}
+
+// ---------- gameplay ----------
+function fire() {
+  G.bolts.push({ k: 'bolt', x: ship.x - 0.32, y: ship.y + 0.06, z: SHIP_Z + 0.4 }, { k: 'bolt', x: ship.x + 0.32, y: ship.y + 0.06, z: SHIP_Z + 0.4 });
+  sfx.fire();
+}
+function damage() {
+  G.hull--; G.inv = 1.5; G.shake = reduceMotion ? 0 : 16; G.red = 0.5;
+  if (G.combo > 0) pop('Combo lost', '#ff4d6d');
+  G.combo = 0;
+  buzz(G.hull > 0 ? 140 : [200, 80, 300]);
+  sfx.hit();
+  burst(ship.x, ship.y, SHIP_Z, '#5ce1ff', 14, 4, 0.07);
+  if (G.hull <= 0) gameOver();
+}
+function hitRock(e) {
+  e.hp--; e.flash = 0.12;
+  if (e.hp <= 0) { e.dead = true; explode(e); G.kills++; addScore(25); }
+  else { sfx.tick(); burst(e.x, e.y, e.z + e.r * 0.5, '#ffd9a0', 6, 2, 0.06); }
+}
+function collide(e) {
+  const d = Math.hypot(e.x - ship.x, e.y - ship.y);
+  if (e.k === 'rock') {
+    if (G.inv <= 0 && d < e.r * 0.85 + SHIP_R) { e.dead = true; explode(e); damage(); }
+  } else if (e.k === 'gem') {
+    if (d < e.r + 0.8) { e.dead = true; G.gems++; addScore(10); burst(e.x, e.y, e.z, '#ffb547', 8, 2.5, 0.06); sfx.gem(); }
+  } else if (e.k === 'ring') {
+    if (d < e.r - 0.1) {
+      e.state = 1; G.rings++; G.combo = Math.min(G.combo + 1, 5);
+      addScore(50, '#5ce1ff'); sfx.ring(); buzz(25);
+    } else {
+      e.state = -1;
+      if (G.combo > 0) pop('Combo lost', '#ff4d6d');
+      G.combo = 0; sfx.miss();
+    }
+  } else if (e.k === 'repair') {
+    if (d < e.r + 0.8) { e.dead = true; G.hull = Math.min(3, G.hull + 1); pop('Hull repaired', '#6dffb0'); sfx.repair(); burst(e.x, e.y, e.z, '#6dffb0', 12, 3, 0.07); }
+  }
+}
+
+function update(dt) {
+  G.t += dt;
+  G.speed = 16 + Math.min(34, G.t * 0.45);
+  const dz = G.speed * dt;
+  G.dist += dz * 0.5;
+  G.travel += dz;
+
+  readInput(dt);
+  const tx = input.tx * BX, ty = input.ty * BY;
+  ship.vx = (tx - ship.x) * 9; ship.vy = (ty - ship.y) * 9;
+  ship.x = clamp(ship.x + ship.vx * dt, -BX, BX);
+  ship.y = clamp(ship.y + ship.vy * dt, -BY, BY);
+  cam.x = ship.x * CAM_FOLLOW; cam.y = ship.y * CAM_FOLLOW - CAM_LIFT;
+
+  const T = G.timers;
+  if ((T.rock -= dt) <= 0) { spawnRock(); T.rock = Math.max(0.13, 0.62 - G.t * 0.005) * rand(0.6, 1.4); }
+  if ((T.gem -= dt) <= 0) { spawnGems(); T.gem = rand(2.2, 3.6); }
+  if ((T.ring -= dt) <= 0) { spawnRing(); T.ring = rand(3.5, 5.5); }
+  if ((T.repair -= dt) <= 0) { if (G.hull < 3) spawnRepair(); T.repair = rand(18, 26); }
+
+  G.fireCd -= dt;
+  if ((input.firing || input.keys.f) && G.fireCd <= 0) { fire(); G.fireCd = 0.16; }
+
+  for (const e of G.ents) {
+    const pz = e.z;
+    e.z -= dz;
+    if (e.k === 'rock') { e.rot += e.vr * dt; if (e.flash > 0) e.flash -= dt; }
+    else e.spin += dt * 3;
+    if (e.k === 'ring' && e.state) e.t += dt;
+    if (!e.dead && pz > SHIP_Z && e.z <= SHIP_Z) collide(e);
+  }
+
+  const BOLT_V = 75;
+  for (const b of G.bolts) {
+    const pz = b.z;
+    b.z += BOLT_V * dt;
+    for (const e of G.ents) {
+      if (e.k !== 'rock' || e.dead) continue;
+      if (e.z + dz + e.r >= pz && e.z - e.r <= b.z && Math.hypot(e.x - b.x, e.y - b.y) < e.r + 0.18) {
+        b.dead = true; hitRock(e); break;
+      }
+    }
+    if (b.z > FAR) b.dead = true;
+  }
+
+  for (const p of G.parts) {
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt - dz; p.life -= dt;
+  }
+  for (const p of G.pops) { p.life -= dt * 0.9; p.y -= dt * 40; }
+
+  G.ents = G.ents.filter(e => !e.dead && e.z > 0.6);
+  G.bolts = G.bolts.filter(b => !b.dead);
+  G.parts = G.parts.filter(p => p.life > 0 && p.z > 0.6);
+  G.pops = G.pops.filter(p => p.life > 0);
+
+  if (G.inv > 0) G.inv -= dt;
+  if (G.red > 0) G.red -= dt;
+  G.shake *= Math.exp(-dt * 7);
+  for (const s of stars) { s.z -= dz; if (s.z < 1) { s.z += FAR; s.x = rand(-34, 34); s.y = rand(-34, 34); } }
+}
+
+let ambientT = 0;
+function ambient(dt) {
+  ambientT += dt;
+  const v = G.state === 'paused' ? 0 : G.state === 'over' ? 6 : 12;
+  G.speed += (v - G.speed) * Math.min(1, dt * 2);
+  const dz = G.speed * dt;
+  G.travel += dz;
+  if (G.state === 'title') {
+    const tx = Math.sin(ambientT * 0.7) * 1.2, ty = Math.sin(ambientT * 1.1) * 0.5 + 0.6;
+    ship.vx = (tx - ship.x) * 3; ship.vy = (ty - ship.y) * 3;
+    ship.x += ship.vx * dt; ship.y += ship.vy * dt;
+    cam.x = ship.x * CAM_FOLLOW; cam.y = ship.y * CAM_FOLLOW - CAM_LIFT;
+  }
+  if (G.state !== 'paused') {
+    for (const s of stars) { s.z -= dz; if (s.z < 1) { s.z += FAR; s.x = rand(-34, 34); s.y = rand(-34, 34); } }
+    for (const e of G.ents) { e.z -= dz; if (e.k === 'rock') e.rot += e.vr * dt; else e.spin += dt * 3; }
+    for (const p of G.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt - dz; p.life -= dt; }
+    G.ents = G.ents.filter(e => e.z > 0.6);
+    G.parts = G.parts.filter(p => p.life > 0 && p.z > 0.6);
+    G.shake *= Math.exp(-dt * 7);
+    if (G.red > 0) G.red -= dt;
+  }
+}
+
+// ---------- rendering ----------
+function depthAlpha(z) {
+  const far = clamp((FAR - z) / 14, 0, 1);
+  const near = z < SHIP_Z ? clamp((z - 0.6) / (SHIP_Z - 0.6), 0, 1) * 0.55 : 1;
+  return far * near;
+}
+
+function drawBackground() {
+  ctx.fillStyle = '#05060f';
+  ctx.fillRect(0, 0, W, H);
+  const px = -cam.x * F * 0.02, py = -cam.y * F * 0.02;
+  let g = ctx.createRadialGradient(W * 0.25 + px, H * 0.3 + py, 0, W * 0.25 + px, H * 0.3 + py, Math.max(W, H) * 0.6);
+  g.addColorStop(0, 'rgba(70, 40, 140, 0.32)'); g.addColorStop(1, 'rgba(70, 40, 140, 0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  g = ctx.createRadialGradient(W * 0.8 + px, H * 0.75 + py, 0, W * 0.8 + px, H * 0.75 + py, Math.max(W, H) * 0.5);
+  g.addColorStop(0, 'rgba(20, 110, 150, 0.25)'); g.addColorStop(1, 'rgba(20, 110, 150, 0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+
+function drawStars() {
+  ctx.lineCap = 'round';
+  const streak = Math.max(0.15, G.speed * 0.035);
+  for (const s of stars) {
+    const [x1, y1, sc] = proj(s.x, s.y, s.z);
+    if (x1 < -20 || x1 > W + 20 || y1 < -20 || y1 > H + 20) continue;
+    const [x2, y2] = proj(s.x, s.y, s.z + streak);
+    const a = clamp(1 - s.z / FAR, 0, 1) * 0.9;
+    ctx.strokeStyle = `rgba(205, 218, 255, ${a})`;
+    ctx.lineWidth = Math.max(0.7, sc * 0.035);
+    ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x1, y1); ctx.stroke();
+  }
+}
+
+function drawCorridor() {
+  const gap = 12, off = G.travel % gap, ex = BX + 1.3, ey = BY + 1.3;
+  ctx.lineWidth = 1;
+  for (let z = gap - off; z < FAR; z += gap) {
+    if (z < 1.2) continue;
+    const a = 0.2 * (1 - z / FAR) * clamp((z - 1.2) / 4, 0, 1);
+    const [x1, y1] = proj(-ex, -ey, z), [x2, y2] = proj(ex, ey, z);
+    ctx.strokeStyle = `rgba(92, 225, 255, ${a})`;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+  }
+  ctx.strokeStyle = 'rgba(92, 225, 255, 0.08)';
+  ctx.beginPath();
+  for (const [cx, cy] of [[-ex, -ey], [ex, -ey], [ex, ey], [-ex, ey]]) {
+    const [ax, ay] = proj(cx, cy, 1.5), [bx, by] = proj(cx, cy, FAR);
+    ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+  }
+  ctx.stroke();
+}
+
+function drawRock(e) {
+  const [x, y, s] = proj(e.x, e.y, e.z), R = e.r * s;
+  if (R < 0.6 || x < -R * 2 || x > W + R * 2 || y < -R * 2 || y > H + R * 2) return;
+  ctx.globalAlpha = depthAlpha(e.z);
+  ctx.save(); ctx.translate(x, y); ctx.rotate(e.rot);
+  const v = e.verts;
+  ctx.beginPath(); ctx.moveTo(v[0] * R, v[1] * R);
+  for (let i = 2; i < v.length; i += 2) ctx.lineTo(v[i] * R, v[i + 1] * R);
+  ctx.closePath();
+  ctx.rotate(-e.rot); // keep lighting fixed from upper-left
+  const g = ctx.createRadialGradient(-R * 0.4, -R * 0.45, R * 0.05, 0, 0, R * 1.15);
+  g.addColorStop(0, e.flash > 0 ? '#fff1dc' : `hsl(${e.hue}, 20%, 52%)`);
+  g.addColorStop(1, `hsl(${e.hue}, 25%, 11%)`);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 220, 180, 0.14)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.rotate(e.rot);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+  const c = e.craters;
+  for (let i = 0; i < c.length; i += 3) { ctx.beginPath(); ctx.arc(c[i] * R, c[i + 1] * R, c[i + 2] * R, 0, 6.283); ctx.fill(); }
+  ctx.restore();
+  // collision-course warning bracket
+  if (G.state === 'playing' && e.z > SHIP_Z && e.z < 34 && Math.hypot(e.x - ship.x, e.y - ship.y) < e.r * 0.85 + SHIP_R) {
+    const a = clamp((34 - e.z) / 20, 0, 1) * (0.55 + 0.45 * Math.sin(performance.now() / 70));
+    ctx.globalAlpha = a;
+    ctx.strokeStyle = '#ff4d6d'; ctx.lineWidth = 2;
+    const r = R * 1.25 + 4, k = r * 0.45;
+    ctx.beginPath();
+    for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      ctx.moveTo(x + sx * r, y + sy * (r - k)); ctx.lineTo(x + sx * r, y + sy * r); ctx.lineTo(x + sx * (r - k), y + sy * r);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawRing(e) {
+  const [x, y, s] = proj(e.x, e.y, e.z), R = e.r * s;
+  if (R < 1) return;
+  let a = depthAlpha(e.z);
+  let col = '92, 225, 255';
+  if (e.state === 1) { col = '109, 255, 176'; a *= clamp(1 - e.t * 1.5, 0, 1); }
+  else if (e.state === -1) { col = '255, 77, 109'; a *= clamp(1 - e.t * 1.5, 0, 1) * 0.7; }
+  const grow = e.state === 1 ? 1 + e.t * 0.6 : 1;
+  ctx.globalAlpha = a;
+  ctx.strokeStyle = `rgba(${col}, 0.18)`; ctx.lineWidth = Math.max(2, s * 0.35);
+  ctx.beginPath(); ctx.arc(x, y, R * grow, 0, 6.283); ctx.stroke();
+  ctx.strokeStyle = `rgba(${col}, 0.95)`; ctx.lineWidth = Math.max(1.2, s * 0.07);
+  ctx.beginPath(); ctx.arc(x, y, R * grow, 0, 6.283); ctx.stroke();
+  // rotating chevron marks
+  ctx.lineWidth = Math.max(1, s * 0.05);
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const ang = e.spin * 0.4 + i * Math.PI / 4, r1 = R * grow * 1.12, r2 = R * grow * 1.24;
+    ctx.moveTo(x + Math.cos(ang) * r1, y + Math.sin(ang) * r1);
+    ctx.lineTo(x + Math.cos(ang) * r2, y + Math.sin(ang) * r2);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawGem(e) {
+  const [x, y, s] = proj(e.x, e.y, e.z), R = e.r * s;
+  if (R < 0.6) return;
+  ctx.globalAlpha = depthAlpha(e.z);
+  const g = ctx.createRadialGradient(x, y, 0, x, y, R * 2.4);
+  g.addColorStop(0, 'rgba(255, 181, 71, 0.45)'); g.addColorStop(1, 'rgba(255, 181, 71, 0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, R * 2.4, 0, 6.283); ctx.fill();
+  const w = Math.cos(e.spin) * 0.65 * R;
+  ctx.beginPath(); ctx.moveTo(x, y - R); ctx.lineTo(x + w, y); ctx.lineTo(x, y + R); ctx.lineTo(x - w, y); ctx.closePath();
+  ctx.fillStyle = '#ffcf7a'; ctx.fill();
+  ctx.beginPath(); ctx.moveTo(x, y - R); ctx.lineTo(x + w, y); ctx.lineTo(x, y); ctx.closePath();
+  ctx.fillStyle = '#fff3d6'; ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
+function drawRepair(e) {
+  const [x, y, s] = proj(e.x, e.y, e.z), R = e.r * s;
+  if (R < 0.6) return;
+  ctx.globalAlpha = depthAlpha(e.z);
+  const pulse = 1 + Math.sin(e.spin * 2) * 0.08;
+  ctx.strokeStyle = '#6dffb0'; ctx.lineWidth = Math.max(1, R * 0.14);
+  ctx.beginPath(); ctx.arc(x, y, R * pulse, 0, 6.283); ctx.stroke();
+  ctx.fillStyle = '#6dffb0';
+  const t = R * 0.18, l = R * 0.6;
+  ctx.fillRect(x - t, y - l, t * 2, l * 2); ctx.fillRect(x - l, y - t, l * 2, t * 2);
+  ctx.globalAlpha = 1;
+}
+
+function drawBolt(b) {
+  const [x1, y1, s] = proj(b.x, b.y, b.z), [x2, y2] = proj(b.x, b.y, Math.max(0.8, b.z - 2.2));
+  ctx.globalAlpha = clamp((FAR - b.z) / 20, 0, 1);
+  ctx.strokeStyle = 'rgba(92, 225, 255, 0.35)'; ctx.lineWidth = Math.max(2, s * 0.22);
+  ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x1, y1); ctx.stroke();
+  ctx.strokeStyle = '#e9fbff'; ctx.lineWidth = Math.max(1, s * 0.07);
+  ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x1, y1); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+
+function drawPart(p) {
+  if (p.z < 1.6) return;
+  const [x, y, s] = proj(p.x, p.y, p.z), r = Math.max(0.8, p.size * s);
+  ctx.globalAlpha = clamp(p.life / p.max, 0, 1) * depthAlpha(p.z);
+  ctx.fillStyle = p.color;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  ctx.globalAlpha = 1;
+}
+
+function drawShip() {
+  const [sx, sy, s] = proj(ship.x, ship.y, SHIP_Z), u = s * 0.62;
+  const bank = clamp(ship.vx * 0.05, -0.65, 0.65);
+  const pitch = clamp(ship.vy * 0.03, -0.3, 0.3);
+  const blink = G.state === 'playing' && G.inv > 0 && ((G.inv * 12) | 0) % 2;
+  ctx.save();
+  ctx.globalAlpha = blink ? 0.3 : 1;
+  ctx.translate(sx, sy); ctx.rotate(bank); ctx.scale(1, 1 - Math.abs(pitch) * 0.6);
+
+  // engine glow (additive)
+  ctx.globalCompositeOperation = 'lighter';
+  const thrust = 0.75 + Math.random() * 0.35 + G.speed / 120;
+  for (const side of [-1, 1]) {
+    const ex = side * 0.15 * u, ey = 0.3 * u, r = 0.32 * u * thrust;
+    const g = ctx.createRadialGradient(ex, ey, 0, ex, ey, r);
+    g.addColorStop(0, 'rgba(255, 245, 220, 0.95)');
+    g.addColorStop(0.3, 'rgba(255, 181, 71, 0.75)');
+    g.addColorStop(1, 'rgba(255, 90, 40, 0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ex, ey, r, 0, 6.283); ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  // main wing
+  let g = ctx.createLinearGradient(0, -0.4 * u, 0, 0.4 * u);
+  g.addColorStop(0, '#9aa6c8'); g.addColorStop(1, '#2a3150');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(0, -0.34 * u); ctx.lineTo(1.0 * u, 0.26 * u); ctx.lineTo(0.86 * u, 0.36 * u);
+  ctx.lineTo(0, 0.22 * u); ctx.lineTo(-0.86 * u, 0.36 * u); ctx.lineTo(-1.0 * u, 0.26 * u);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(232, 236, 247, 0.5)'; ctx.lineWidth = Math.max(1, u * 0.02); ctx.stroke();
+
+  // wing stripes
+  ctx.strokeStyle = '#ffb547'; ctx.lineWidth = Math.max(1, u * 0.035);
+  ctx.beginPath();
+  ctx.moveTo(0.55 * u, 0.12 * u); ctx.lineTo(0.78 * u, 0.26 * u);
+  ctx.moveTo(-0.55 * u, 0.12 * u); ctx.lineTo(-0.78 * u, 0.26 * u);
+  ctx.stroke();
+
+  // tail fins
+  ctx.fillStyle = '#4a5478';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(side * 0.5 * u, 0.2 * u); ctx.lineTo(side * 0.6 * u, -0.12 * u); ctx.lineTo(side * 0.64 * u, 0.25 * u);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // fuselage
+  g = ctx.createLinearGradient(-0.22 * u, 0, 0.22 * u, 0);
+  g.addColorStop(0, '#59628a'); g.addColorStop(0.5, '#dfe5f5'); g.addColorStop(1, '#59628a');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(0, -0.66 * u); ctx.lineTo(0.22 * u, -0.08 * u); ctx.lineTo(0.2 * u, 0.32 * u);
+  ctx.lineTo(-0.2 * u, 0.32 * u); ctx.lineTo(-0.22 * u, -0.08 * u);
+  ctx.closePath(); ctx.fill();
+
+  // nozzles
+  ctx.fillStyle = '#141829';
+  for (const side of [-1, 1]) { ctx.beginPath(); ctx.arc(side * 0.1 * u, 0.3 * u, 0.075 * u, 0, 6.283); ctx.fill(); }
+
+  // cockpit
+  const cy = (-0.22 + pitch * 0.25) * u;
+  g = ctx.createRadialGradient(-0.03 * u, cy - 0.06 * u, 0, 0, cy, 0.18 * u);
+  g.addColorStop(0, '#e9fbff'); g.addColorStop(0.4, '#5ce1ff'); g.addColorStop(1, '#0c3a52');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.ellipse(0, cy, 0.09 * u, 0.17 * u, 0, 0, 6.283); ctx.fill();
+
+  // nav lights
+  const on = (performance.now() / 500 | 0) % 2;
+  ctx.fillStyle = on ? '#ff4d6d' : 'rgba(255, 77, 109, 0.3)';
+  ctx.beginPath(); ctx.arc(-0.97 * u, 0.28 * u, Math.max(1.5, 0.035 * u), 0, 6.283); ctx.fill();
+  ctx.fillStyle = on ? '#6dffb0' : 'rgba(109, 255, 176, 0.3)';
+  ctx.beginPath(); ctx.arc(0.97 * u, 0.28 * u, Math.max(1.5, 0.035 * u), 0, 6.283); ctx.fill();
+
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+const SHIP_TOKEN = { k: 'ship', z: SHIP_Z };
+const drawers = { rock: drawRock, ring: drawRing, gem: drawGem, repair: drawRepair, bolt: drawBolt, part: drawPart, ship: drawShip };
+
+function render() {
+  const sh = G.shake || 0;
+  drawBackground();
+  ctx.save();
+  if (sh > 0.3) ctx.translate((Math.random() - 0.5) * sh, (Math.random() - 0.5) * sh);
+  drawStars();
+  drawCorridor();
+  const list = G.ents.concat(G.bolts, G.parts);
+  if (G.state !== 'over') list.push(SHIP_TOKEN);
+  list.sort((a, b) => b.z - a.z);
+  for (const o of list) drawers[o.k](o);
+  ctx.restore();
+
+  // floating score text
+  ctx.textAlign = 'center';
+  ctx.font = '600 15px "IBM Plex Mono", ui-monospace, monospace';
+  for (const p of G.pops) {
+    ctx.globalAlpha = clamp(p.life, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+
+  if (G.red > 0) {
+    ctx.fillStyle = `rgba(255, 40, 70, ${clamp(G.red, 0, 0.5) * 0.6})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+// ---------- HUD ----------
+const hudEls = { score: $('score'), mult: $('mult'), hull: $('hull'), speed: $('speed') };
+const hudCache = {};
+function setText(key, val) { if (hudCache[key] !== val) { hudCache[key] = val; hudEls[key].textContent = val; } }
+function score() { return Math.floor(G.dist) + G.bonus; }
+function hud() {
+  if (G.state !== 'playing') return;
+  setText('score', score().toLocaleString());
+  setText('mult', G.combo ? `×${G.combo + 1} ring chain` : '');
+  setText('speed', `SPD ${Math.round(G.speed * 60)} m/s`);
+  if (hudCache.hull !== G.hull) {
+    hudCache.hull = G.hull;
+    [...hudEls.hull.children].forEach((el, i) => el.classList.toggle('on', i < G.hull));
+    hudEls.hull.classList.toggle('low', G.hull === 1);
+  }
+}
+
+let toastTimer = 0;
+function toast(msg, ms = 2600) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// ---------- screens / flow ----------
+const screens = { title: $('titleScreen'), paused: $('pauseScreen'), over: $('overScreen') };
+function show(name) {
+  for (const k in screens) screens[k].hidden = k !== name;
+  $('hud').hidden = !(name === 'playing' || name === 'paused');
+  const settingsEl = $('settings');
+  if (name === 'paused') $('pauseSettingsSlot').appendChild(settingsEl);
+  else if (name === 'title') screens.title.querySelector('.panel').appendChild(settingsEl);
+}
+function updateBestLabel() { $('bestTitle').textContent = best ? `Best run: ${best.toLocaleString()}` : ''; }
+
+let wakeLock = null;
+async function keepAwake() {
+  try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) { wakeLock = null; }
+}
+
+async function start() {
+  initAudio();
+  // Permission prompt (iOS) must run straight from the tap.
+  const granted = await requestTiltPermission();
+  reset();
+  input.needCalib = true; input.sL = input.sP = 0;
+  input.mode = isTouchDevice() ? 'touch' : 'mouse';
+  G.state = 'playing';
+  for (const k in hudCache) delete hudCache[k];
+  show('playing');
+  humStart();
+  keepAwake();
+  if (isTouchDevice()) {
+    toast('Hold steady. Setting neutral tilt…', 1400);
+    // Trust real sensor data over the permission answer: some browsers report one without the other.
+    setTimeout(() => {
+      if (G.state !== 'playing' && G.state !== 'paused') return;
+      if (input.tiltSeen) { input.mode = 'tilt'; input.needCalib = true; toast('Tilt to steer. Hold a finger down to fire.'); }
+      else if (!granted) toast('Motion access was declined. Drag a finger to steer; holding down fires.', 4000);
+      else toast('No tilt sensor found. Drag a finger to steer; holding down fires.', 4000);
+    }, 900);
+  } else {
+    toast('Steer with the mouse or arrow keys. Click or Space fires.');
+  }
+  $('calBtn').hidden = !isTouchDevice();
+}
+
+function pause() {
+  if (G.state !== 'playing') return;
+  G.state = 'paused'; input.firing = false; input.ptr = null; input.keys = {};
+  show('paused');
+  humUpdate();
+}
+function resume(recal) {
+  if (G.state !== 'paused') return;
+  initAudio();
+  if (recal) { input.needCalib = true; }
+  G.state = 'playing';
+  show('playing');
+  keepAwake();
+  if (recal && input.mode === 'tilt') toast('Neutral tilt set to how you are holding the phone now.');
+}
+function recalibrate() {
+  input.needCalib = true;
+  toast(input.mode === 'tilt' ? 'Neutral tilt set to how you are holding the phone now.' : 'Recentred.');
+  if (input.mode !== 'tilt') { input.tx = input.ty = 0; }
+}
+function gameOver() {
+  G.state = 'over';
+  input.firing = false; input.ptr = null;
+  burst(ship.x, ship.y, SHIP_Z + 0.5, '#ffb547', 40, 7, 0.12);
+  burst(ship.x, ship.y, SHIP_Z + 0.5, '#5ce1ff', 24, 5, 0.08);
+  G.shake = reduceMotion ? 0 : 26;
+  sfx.over();
+  const sc = score(), isBest = sc > best;
+  if (isBest) { best = sc; store.set('best', best); }
+  $('finalScore').textContent = sc.toLocaleString();
+  $('finalDist').textContent = (G.dist / 10).toFixed(1) + ' km';
+  $('finalRings').textContent = G.rings;
+  $('finalKills').textContent = G.kills;
+  $('finalBest').textContent = best.toLocaleString();
+  $('newBest').hidden = !isBest;
+  updateBestLabel();
+  setTimeout(() => { if (G.state === 'over') show('over'); }, 1100);
+}
+function toTitle() {
+  G.state = 'title'; G.ents = []; G.bolts = []; G.pops = [];
+  show('title');
+}
+
+$('startBtn').addEventListener('click', start);
+$('againBtn').addEventListener('click', start);
+$('menuBtn').addEventListener('click', toTitle);
+$('pauseBtn').addEventListener('click', pause);
+$('resumeBtn').addEventListener('click', () => resume(false));
+$('recalResumeBtn').addEventListener('click', () => resume(true));
+$('quitBtn').addEventListener('click', () => { humUpdate(); toTitle(); });
+$('calBtn').addEventListener('click', recalibrate);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pause();
+  else if (G.state === 'playing' || G.state === 'paused') keepAwake();
+});
+
+// settings controls
+const sensIds = { low: 'sensLow', med: 'sensMed', high: 'sensHigh' };
+$(sensIds[settings.sens] || 'sensMed').checked = true;
+$('invert').checked = !!settings.invert;
+$('sound').checked = !!settings.sound;
+document.querySelectorAll('input[name="sens"]').forEach(r => r.addEventListener('change', () => { settings.sens = r.value; store.set('settings', settings); }));
+$('invert').addEventListener('change', e => { settings.invert = e.target.checked; store.set('settings', settings); });
+$('sound').addEventListener('change', e => { settings.sound = e.target.checked; store.set('settings', settings); humUpdate(); });
+
+updateBestLabel();
+
+// ---------- main loop ----------
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  last = now;
+  if (G.state === 'playing') update(dt); else ambient(dt);
+  render();
+  hud();
+  humUpdate();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// test hook (harmless in production)
+window.__starship = { G, ship, input, settings };
+})();
+</script>
+</body>
+</html>
