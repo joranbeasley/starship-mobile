@@ -135,6 +135,18 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
 .stats .big { font-family: var(--display); font-size: 30px; color: var(--ion); }
 .newbest { color: var(--mend); font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; }
 
+.tiltpad {
+  position: fixed; z-index: 2; pointer-events: none;
+  left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  width: 56px; height: 56px; border-radius: 50%;
+  border: 1px solid var(--line); background: rgba(10, 14, 32, 0.45);
+  background-image: linear-gradient(var(--line), var(--line)), linear-gradient(var(--line), var(--line));
+  background-size: 1px 100%, 100% 1px; background-position: center; background-repeat: no-repeat;
+}
+.tiltpad i {
+  position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px;
+  border-radius: 50%; background: var(--ion); box-shadow: 0 0 8px var(--ion);
+}
 .toast {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 28px); z-index: 6;
   transform: translateX(-50%); max-width: calc(100% - 32px);
@@ -196,6 +208,10 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
         </div>
       </div>
       <div class="row">
+        <span class="label">Reverse left/right</span>
+        <label class="toggle" aria-label="Reverse left and right tilt"><input type="checkbox" id="reverseX"><span></span></label>
+      </div>
+      <div class="row">
         <span class="label">Reverse up/down</span>
         <label class="toggle" aria-label="Reverse up and down tilt"><input type="checkbox" id="invert"><span></span></label>
       </div>
@@ -239,6 +255,8 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
   </div>
 </div>
 
+<div class="tiltpad" id="tiltpad" hidden aria-hidden="true"><i id="tiltdot"></i></div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -255,7 +273,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('starshipDrift.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('starshipDrift.' + k, JSON.stringify(v)); } catch (e) {} }
 };
-const settings = Object.assign({ sens: 'med', reverseY: false, sound: true }, store.get('settings', {}));
+const settings = Object.assign({ sens: 'med', reverseX: false, reverseY: false, sound: true }, store.get('settings', {}));
 let best = store.get('best', 0) | 0;
 const SENS = { low: 42, med: 30, high: 20 };   // degrees of tilt for full deflection
 
@@ -382,19 +400,22 @@ function screenAngle() {
 function onOrient(ev) {
   if (ev.beta == null || ev.gamma == null) return;
   input.tiltSeen = true;
-  const b = ev.beta, g = ev.gamma;
-  let L, P;
-  // Map device axes to screen axes so "right" and "up" follow the current screen rotation.
-  switch (screenAngle()) {
-    case 90: L = b; P = -g; break;
-    case 270: L = -b; P = g; break;
-    case 180: L = -g; P = -b; break;
-    default: L = g; P = b;
-  }
+  // Raw beta/gamma are Euler angles: near upright or in landscape they hit gimbal lock and
+  // gamma can flip sign. Rebuild the "up" direction in device coordinates instead, which is
+  // continuous at every holding angle: up = (-sin γ cos β, sin β, cos γ cos β).
+  const D = Math.PI / 180, b = ev.beta * D, g = ev.gamma * D;
+  const ux = -Math.sin(g) * Math.cos(b), uy = Math.sin(b), uz = Math.cos(g) * Math.cos(b);
+  // Rotate into screen coordinates (x = screen right, y = screen up) for the current rotation.
+  const a = screenAngle() * D, ca = Math.cos(a), sa = Math.sin(a);
+  const sx = ux * ca - uy * sa, sy = ux * sa + uy * ca, sz = uz;
+  // L: roll, positive when the screen's right edge dips. P: how upright the screen is
+  // (0° flat on a table, 90° facing you), decreasing as the top edge tips away.
+  const L = Math.asin(clamp(-sx, -1, 1)) / D;
+  const P = Math.atan2(sy, sz) / D;
   if (input.needCalib) {
     input.L0 = L; input.P0 = P; input.sL = 0; input.sP = 0; input.needCalib = false;
   }
-  const dL = wrap180(L - input.L0), dP = wrap180(P - input.P0);
+  const dL = L - input.L0, dP = wrap180(P - input.P0);
   // Low-pass filter: hand tremor and sensor noise otherwise make the ship twitch.
   input.sL += (dL - input.sL) * 0.2;
   input.sP += (dP - input.sP) * 0.2;
@@ -424,7 +445,7 @@ function applyTilt() {
     const n = (a - 0.07) / 0.93;
     return Math.sign(v) * n * (0.4 + 0.6 * n);
   };
-  input.tx = curve(input.sL / m);
+  input.tx = curve(input.sL / m) * (settings.reverseX ? -1 : 1);
   // Default: tip the top edge away to dive, like pushing a flight stick forward.
   input.ty = -curve(input.sP / m) * (settings.reverseY ? -1 : 1);
 }
@@ -923,6 +944,7 @@ function render() {
 // ---------- HUD ----------
 const hudEls = { score: $('score'), mult: $('mult'), hull: $('hull'), speed: $('speed') };
 const hudCache = {};
+const tiltpad = $('tiltpad'), tiltdot = $('tiltdot');
 function setText(key, val) { if (hudCache[key] !== val) { hudCache[key] = val; hudEls[key].textContent = val; } }
 function score() { return Math.floor(G.dist) + G.bonus; }
 function hud() {
@@ -930,6 +952,9 @@ function hud() {
   setText('score', score().toLocaleString());
   setText('mult', G.combo ? `×${G.combo + 1} ring chain` : '');
   setText('speed', `SPD ${Math.round(G.speed * 60)} m/s`);
+  const showPad = input.mode === 'tilt';
+  if (tiltpad.hidden === showPad) tiltpad.hidden = !showPad;
+  if (showPad) tiltdot.style.transform = `translate(${(input.tx * 22).toFixed(1)}px, ${(input.ty * 22).toFixed(1)}px)`;
   if (hudCache.hull !== G.hull) {
     hudCache.hull = G.hull;
     [...hudEls.hull.children].forEach((el, i) => el.classList.toggle('on', i < G.hull));
@@ -950,6 +975,7 @@ const screens = { title: $('titleScreen'), paused: $('pauseScreen'), over: $('ov
 function show(name) {
   for (const k in screens) screens[k].hidden = k !== name;
   $('hud').hidden = !(name === 'playing' || name === 'paused');
+  if (name !== 'playing') tiltpad.hidden = true;
   const settingsEl = $('settings');
   if (name === 'paused') $('pauseSettingsSlot').appendChild(settingsEl);
   else if (name === 'title') screens.title.querySelector('.panel').appendChild(settingsEl);
@@ -1048,6 +1074,8 @@ document.addEventListener('visibilitychange', () => {
 const sensIds = { low: 'sensLow', med: 'sensMed', high: 'sensHigh' };
 $(sensIds[settings.sens] || 'sensMed').checked = true;
 $('invert').checked = !!settings.reverseY;
+$('reverseX').checked = !!settings.reverseX;
+$('reverseX').addEventListener('change', e => { settings.reverseX = e.target.checked; store.set('settings', settings); });
 $('sound').checked = !!settings.sound;
 document.querySelectorAll('input[name="sens"]').forEach(r => r.addEventListener('change', () => { settings.sens = r.value; store.set('settings', settings); }));
 $('invert').addEventListener('change', e => { settings.reverseY = e.target.checked; store.set('settings', settings); });
