@@ -397,6 +397,7 @@ function screenAngle() {
     ? screen.orientation.angle : (typeof window.orientation === 'number' ? window.orientation : 0);
   return ((a % 360) + 360) % 360;
 }
+const angleFix = {};
 function onOrient(ev) {
   if (ev.beta == null || ev.gamma == null) return;
   input.tiltSeen = true;
@@ -406,8 +407,22 @@ function onOrient(ev) {
   const D = Math.PI / 180, b = ev.beta * D, g = ev.gamma * D;
   const ux = -Math.sin(g) * Math.cos(b), uy = Math.sin(b), uz = Math.cos(g) * Math.cos(b);
   // Rotate into screen coordinates (x = screen right, y = screen up) for the current rotation.
-  const a = screenAngle() * D, ca = Math.cos(a), sa = Math.sin(a);
-  const sx = ux * ca - uy * sa, sy = ux * sa + uy * ca, sz = uz;
+  let deg = screenAngle();
+  if (deg === 0 && innerWidth > innerHeight * 1.1) deg = 90; // landscape but no angle reported
+  const toScreen = d => {
+    const a = d * D, ca = Math.cos(a), sa = Math.sin(a);
+    return [ux * ca - uy * sa, ux * sa + uy * ca];
+  };
+  let fix = angleFix[deg] || 0;
+  let [sx, sy] = toScreen(deg + fix);
+  // Browsers disagree on the sign of the landscape angle. While setting neutral, the top of
+  // the screen should be higher than the bottom; if it reads lower, the reported angle is
+  // mirrored, so remember a 180° correction for this rotation.
+  if (input.needCalib && (deg === 90 || deg === 270) && sy < -0.2) {
+    fix = angleFix[deg] = (fix + 180) % 360;
+    [sx, sy] = toScreen(deg + fix);
+  }
+  const sz = uz;
   // L: roll, positive when the screen's right edge dips. P: how upright the screen is
   // (0° flat on a table, 90° facing you), decreasing as the top edge tips away.
   const L = Math.asin(clamp(-sx, -1, 1)) / D;
