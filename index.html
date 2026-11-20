@@ -191,7 +191,7 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
     <h1>Starship <span>Drift</span></h1>
     <div class="how">
       <div class="phone-demo" aria-hidden="true"><div></div></div>
-      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Tilt left and right to steer, tip the top edge away to dive and back to climb. Thread the rings, and hold a finger on the screen to fire.</p>
+      <p>Hold your phone the way that feels comfortable. That angle becomes neutral. Tilt left and right to steer, tip the top edge away to climb and back to dive. Thread the rings, and hold a finger on the screen to fire.</p>
     </div>
     <p class="keys">On a computer: steer with the <b>mouse</b> or <b>arrow keys</b>, fire with <b>click</b> or <b>Space</b>, pause with <b>P</b>.</p>
     <div class="stack">
@@ -273,7 +273,7 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem('starshipDrift.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem('starshipDrift.' + k, JSON.stringify(v)); } catch (e) {} }
 };
-const settings = Object.assign({ sens: 'med', reverseX: false, reverseY: false, sound: true }, store.get('settings', {}));
+const settings = Object.assign({ sens: 'med', reverseX: false, flipY: false, sound: true }, store.get('settings', {}));
 let best = store.get('best', 0) | 0;
 const SENS = { low: 42, med: 30, high: 20 };   // degrees of tilt for full deflection
 
@@ -461,8 +461,8 @@ function applyTilt() {
     return Math.sign(v) * n * (0.4 + 0.6 * n);
   };
   input.tx = curve(input.sL / m) * (settings.reverseX ? -1 : 1);
-  // Default: tip the top edge away to dive, like pushing a flight stick forward.
-  input.ty = -curve(input.sP / m) * (settings.reverseY ? -1 : 1);
+  // Default: tip the top edge away to climb, back toward you to dive.
+  input.ty = curve(input.sP / m) * (settings.flipY ? -1 : 1);
 }
 
 // ---------- pointer + keyboard ----------
@@ -1088,12 +1088,12 @@ document.addEventListener('visibilitychange', () => {
 // settings controls
 const sensIds = { low: 'sensLow', med: 'sensMed', high: 'sensHigh' };
 $(sensIds[settings.sens] || 'sensMed').checked = true;
-$('invert').checked = !!settings.reverseY;
+$('invert').checked = !!settings.flipY;
 $('reverseX').checked = !!settings.reverseX;
 $('reverseX').addEventListener('change', e => { settings.reverseX = e.target.checked; store.set('settings', settings); });
 $('sound').checked = !!settings.sound;
 document.querySelectorAll('input[name="sens"]').forEach(r => r.addEventListener('change', () => { settings.sens = r.value; store.set('settings', settings); }));
-$('invert').addEventListener('change', e => { settings.reverseY = e.target.checked; store.set('settings', settings); });
+$('invert').addEventListener('change', e => { settings.flipY = e.target.checked; store.set('settings', settings); });
 $('sound').addEventListener('change', e => { settings.sound = e.target.checked; store.set('settings', settings); humUpdate(); });
 
 updateBestLabel();

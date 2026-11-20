@@ -6,7 +6,7 @@ A spaceship flying game for phones, steered by tilting the device. It is a singl
 
 ## How to play
 
-- **Tilt to steer.** When you press Launch, the way you are holding the phone becomes "neutral". Tilt left and right to steer. Tip the top edge away from you to dive and back toward you to climb, like a flight stick. Turn on *Reverse up/down* or *Reverse left/right* in settings if you prefer it the other way. While flying, the dot in the bottom-left corner shows what the game reads from your tilt. If steering feels twitchy, try *Low* sensitivity.
+- **Tilt to steer.** When you press Launch, the way you are holding the phone becomes "neutral". Tilt left and right to steer. Tip the top edge away from you to climb and back toward you to dive. Turn on *Reverse up/down* or *Reverse left/right* in settings if you prefer it the other way. While flying, the dot in the bottom-left corner shows what the game reads from your tilt. If steering feels twitchy, try *Low* sensitivity.
 - **Hold a finger on the screen to fire** twin lasers. Large asteroids take two hits.
 - **Fly through the cyan rings.** Each ring in a row raises your score multiplier, up to ×6. Missing a ring or taking a hit resets it.
 - Collect amber crystals for points and green repair kits to restore hull.
