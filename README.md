@@ -17,7 +17,7 @@ In all modes (firing is only in the space modes):
 
 - When you press Launch, the way you are holding the phone becomes "neutral". The ⊕ button resets neutral to your current grip, and rotating the screen resets it too.
 - **Hold a finger on the screen to fire** twin lasers. Large asteroids take two hits.
-- Each ring threaded in a row raises your score multiplier, up to ×6. Missing a ring or taking a hit resets it.
+- Each ring threaded in a row raises your score multiplier, up to ×6. Missing a ring or taking a hit resets it. In the space modes, every ring also gives a burst of speed that bleeds off over a couple of seconds, and longer ring chains give bigger bursts.
 - Collect amber crystals for points and green repair kits to restore hull.
 - Red brackets mark asteroids that are on a collision course with you.
 - **Close calls** score a bonus: slip past an asteroid just outside its reach, or skim a wall, a rooftop or the street in the paper plane. Close calls within a few seconds of each other chain up to ×5.

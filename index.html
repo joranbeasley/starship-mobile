@@ -404,7 +404,7 @@ function reset() {
     t: 0, dist: 0, bonus: 0, speed: 16, hull: 3, inv: 0, combo: 0, shake: 0, red: 0,
     ents: [], bolts: [], parts: [], pops: [], fireCd: 0, ring: null, ringWait: 1.2,
     rings: 0, kills: 0, gems: 0, near: 0, nearStreak: 0, nearT: 0, skimT: 0, lastNear: null,
-    pw: { shield: 0, magnet: 0, double: 0, blaster: 0 }, event: null, eventT: rand(30, 40), banner: null, nextMile: 500, birdsSeen: false,
+    pw: { shield: 0, magnet: 0, double: 0, blaster: 0 }, boost: 0, event: null, eventT: rand(30, 40), banner: null, nextMile: 500, birdsSeen: false,
     timers: { gem: 1.5, repair: 22, rock: 0.8, power: rand(8, 12), birds: rand(10, 14), meteor: 0 }
   });
   G.mode = settings.mode;
@@ -816,6 +816,7 @@ function ringDone(success) {
     G.rings++; G.combo = Math.min(G.combo + 1, 5);
     addScore(50, '#5ce1ff'); sfx.ring(); buzz(25);
     if (isPaper()) G.speed = Math.min(30, G.speed + 4); // the hoop gives a gust
+    else { G.boost = Math.min(30, G.boost + 12 + 2 * G.combo); pop('Boost!', '#ffb547'); sfx.whoosh(); } // space: a burst of speed that bleeds off
   } else {
     if (G.combo > 0) pop('Combo lost', '#ff4d6d');
     G.combo = 0; sfx.miss();
@@ -870,8 +871,11 @@ function moveShip(dt, steer) {
 
 function update(dt) {
   G.t += dt;
-  if (isTunnel()) G.speed = 16 + Math.min(34, G.t * 0.45);
-  else if (!isPaper()) G.speed = OPEN_SPEED;
+  // ring boosts bleed off over a couple of seconds
+  G.boost *= Math.exp(-dt * 0.55);
+  if (G.boost < 0.05) G.boost = 0;
+  if (isTunnel()) G.speed = 16 + Math.min(34, G.t * 0.45) + G.boost;
+  else if (!isPaper()) G.speed = OPEN_SPEED + G.boost;
   G.dist += G.speed * dt * 0.5;
 
   readInput(dt);
@@ -1475,6 +1479,22 @@ function drawReticle() {
     }
   }
 }
+// streaks from the screen edges while a ring boost lasts
+const boostLines = [];
+for (let i = 0; i < 28; i++) boostLines.push({ a: rand(0, 6.283), r: rand(0.55, 0.95), l: rand(0.08, 0.2), s: rand(0, 1) });
+function drawBoostLines() {
+  const b = G.boost || 0;
+  if (b < 1 || isPaper() || G.state !== 'playing') return;
+  const k = clamp(b / 20, 0, 1), R = Math.hypot(W, H) / 2, now = performance.now() / 1000;
+  ctx.lineCap = 'round';
+  for (const L of boostLines) {
+    const ph = (L.s + now * 2.2) % 1, r0 = R * (L.r + (1 - ph) * 0.2), r1 = r0 - R * L.l * (0.6 + k);
+    const ca = Math.cos(L.a), sa = Math.sin(L.a);
+    ctx.strokeStyle = `rgba(255, 214, 150, ${0.5 * k * Math.sin(ph * Math.PI)})`;
+    ctx.lineWidth = 1.5 + k * 1.5;
+    ctx.beginPath(); ctx.moveTo(W / 2 + ca * r0, H / 2 + sa * r0); ctx.lineTo(W / 2 + ca * r1, H / 2 + sa * r1); ctx.stroke();
+  }
+}
 function drawBanner() {
   const b = G.banner;
   if (!b) return;
@@ -1720,7 +1740,7 @@ function drawShip() {
 
   // engine glow (additive)
   ctx.globalCompositeOperation = 'lighter';
-  const thrust = 0.75 + Math.random() * 0.35 + G.speed / 120;
+  const thrust = 0.75 + Math.random() * 0.35 + G.speed / 120 + (G.boost || 0) / 18;
   for (const side of [-1, 1]) {
     const ex = side * 0.15 * u, ey = 0.3 * u, r = 0.32 * u * thrust;
     const g = ctx.createRadialGradient(ex, ey, 0, ex, ey, r);
@@ -1863,6 +1883,7 @@ function render() {
   }
   ctx.globalAlpha = 1;
 
+  drawBoostLines();
   drawBanner();
 
   if (G.red > 0) {
