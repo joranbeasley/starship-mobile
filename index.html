@@ -874,7 +874,7 @@ function update(dt) {
   // ring boosts bleed off over a couple of seconds
   G.boost *= Math.exp(-dt * 0.55);
   if (G.boost < 0.05) G.boost = 0;
-  if (isTunnel()) G.speed = 16 + Math.min(34, G.t * 0.45) + G.boost;
+  if (isTunnel()) G.speed = 16 + Math.min(34, G.t * 0.2) + G.boost; // reaches top speed after about 170 s
   else if (!isPaper()) G.speed = OPEN_SPEED + G.boost;
   G.dist += G.speed * dt * 0.5;
 
