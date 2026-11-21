@@ -410,7 +410,7 @@ function reset() {
     t: 0, dist: 0, bonus: 0, speed: 16, hull: 3, inv: 0, combo: 0, shake: 0, red: 0,
     ents: [], bolts: [], parts: [], pops: [], fireCd: 0, ring: null, ringWait: 1.2,
     rings: 0, kills: 0, gems: 0, near: 0, nearStreak: 0, nearT: 0, skimT: 0, lastNear: null,
-    pw: { shield: 0, magnet: 0, double: 0, blaster: 0 }, boost: 0, event: null, eventT: rand(30, 40), banner: null, nextMile: 500, birdsSeen: false,
+    pw: { shield: 0, magnet: 0, double: 0, blaster: 0 }, boost: 0, heat: 0, overheat: false, event: null, eventT: rand(30, 40), banner: null, nextMile: 500, birdsSeen: false,
     timers: { gem: 1.5, repair: 22, rock: 0.8, power: rand(8, 12), birds: rand(10, 14), meteor: 0 }
   });
   G.mode = settings.mode;
@@ -495,6 +495,8 @@ const sfx = {
   repair: () => [392, 523, 784].forEach((f, i) => tone(f, f, 0.12, 'sine', 0.1, i * 0.07)),
   over: () => { noise(1.2, 0.5, 900); tone(220, 30, 1.2, 'sawtooth', 0.1); },
   whoosh: () => noise(0.22, 0.22, 4200),
+  clink: () => { tone(2600, 1900, 0.07, 'triangle', 0.07); tone(3900, 3100, 0.05, 'sine', 0.03); },
+  overheat: () => { tone(420, 110, 0.45, 'sawtooth', 0.07); noise(0.4, 0.15, 1500); },
   power: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, f * 1.02, 0.1, 'square', 0.05, i * 0.05)),
   alarm: () => { tone(330, 660, 0.25, 'sawtooth', 0.06); tone(330, 660, 0.25, 'sawtooth', 0.06, 0.3); },
   shieldPop: () => { tone(1200, 200, 0.3, 'triangle', 0.12); noise(0.2, 0.2, 2500); },
@@ -673,7 +675,9 @@ function makeRock(p, r, v) {
   for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2, m = rand(0.72, 1.08); verts.push(Math.cos(a) * m, Math.sin(a) * m); }
   for (let i = 0; i < 3; i++) craters.push(rand(-0.42, 0.42), rand(-0.42, 0.42), rand(0.1, 0.22));
   G.ents.push({ k: 'rock', p, v, r, rot: rand(0, 6.28), vr: rand(-1.2, 1.2),
-    verts, craters, hp: r > 1.3 ? 2 : 1, hue: rand(14, 34), flash: 0 });
+    verts, craters, hp: r > 1.3 ? 2 : 1, hue: rand(14, 34), flash: 0,
+    // iron asteroids can't be shot apart, only dodged
+    iron: !isPaper() && Math.random() < (isTunnel() ? 0.25 : 0.15) });
 }
 // tunnel spawns: everything appears 80 units ahead inside the box
 const TUNNEL_AHEAD = 80;
@@ -772,7 +776,7 @@ function updateTarget() {
     // no aim assist in the tunnel: show the lock only when a straight shot from either gun would hit
     let best = null, bestAlong = 95;
     for (const e of G.ents) {
-      if (e.k !== 'rock' || e.dead) continue;
+      if (e.k !== 'rock' || e.dead || e.iron) continue;
       for (const side of [-1, 1]) {
         const rel = sub(e.p, addS(ship.p, b.r, side * GUN_X)), along = dot(rel, f);
         if (along < 2 || along > bestAlong) continue;
@@ -784,7 +788,7 @@ function updateTarget() {
   }
   let best = null, bestA = LOCK_CONE;
   for (const e of G.ents) {
-    if (e.k !== 'rock' || e.dead) continue;
+    if (e.k !== 'rock' || e.dead || e.iron) continue;
     const rel = sub(e.p, ship.p), along = dot(rel, f);
     if (along < 4 || along > 95) continue;
     const ang = Math.max(0, len(addS(rel, f, -along)) - e.r * 0.6) / along;
@@ -825,6 +829,7 @@ function damage() {
   if (G.hull <= 0) gameOver();
 }
 function hitRock(e) {
+  if (e.iron) { e.flash = 0.08; burst(e.p, '#e8f1ff', 5, 3, 0.05); sfx.clink(); return; }
   e.hp--; e.flash = 0.12;
   if (e.hp <= 0) { e.dead = true; explode(e); G.kills++; addScore(25); }
   else { sfx.tick(); burst(e.p, '#ffd9a0', 6, 2, 0.06); }
@@ -912,7 +917,14 @@ function update(dt) {
 
   G.fireCd -= dt;
   if (!isPaper()) updateTarget();
-  if (!isPaper() && (input.firing || input.keys.f) && G.fireCd <= 0) { fire(); G.fireCd = G.pw.blaster > 0 ? 0.09 : 0.16; }
+  // guns heat up as you fire; at full heat they lock until they cool to 30%
+  G.heat = Math.max(0, G.heat - dt * 0.35);
+  if (G.overheat && G.heat <= 0.3) { G.overheat = false; sfx.tick(); }
+  if (!isPaper() && !G.overheat && (input.firing || input.keys.f) && G.fireCd <= 0) {
+    fire(); G.fireCd = G.pw.blaster > 0 ? 0.09 : 0.16;
+    G.heat += G.pw.blaster > 0 ? 0.07 : 0.12;
+    if (G.heat >= 1) { G.heat = 1; G.overheat = true; pop('Overheated', '#ff4d6d'); sfx.overheat(); buzz(40); }
+  }
 
   for (const e of G.ents) {
     if (e.k === 'rock') { e.p = addS(e.p, e.v, dt); e.rot += e.vr * dt; if (e.flash > 0) e.flash -= dt; }
@@ -1487,6 +1499,17 @@ function drawReticle() {
     for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(a[0] + dx * (r + 3), a[1] + dy * (r + 3)); ctx.lineTo(a[0] + dx * (r + 9), a[1] + dy * (r + 9)); }
     ctx.stroke();
     ctx.fillStyle = `rgba(${col}, 0.9)`; ctx.fillRect(a[0] - 1.5, a[1] - 1.5, 3, 3);
+    // gun heat: an arc around the reticle, red and blinking when overheated
+    if (G.heat > 0.02) {
+      const hot = G.overheat, blink = hot && ((performance.now() / 150) | 0) % 2;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = hot ? (blink ? 'rgba(255, 77, 109, 0.95)' : 'rgba(255, 77, 109, 0.45)') : `rgba(255, ${Math.round(200 - 120 * G.heat)}, ${Math.round(90 - 40 * G.heat)}, 0.85)`;
+      ctx.beginPath(); ctx.arc(a[0], a[1], r + 13, -Math.PI / 2, -Math.PI / 2 + G.heat * 6.283); ctx.stroke();
+      if (hot) {
+        ctx.font = '600 11px "IBM Plex Mono", ui-monospace, monospace'; ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255, 77, 109, 0.9)'; ctx.fillText('OVERHEAT', a[0], a[1] + r + 30);
+      }
+    }
   }
   if (t) {
     const q = proj(t.p);
@@ -1638,10 +1661,15 @@ function drawRock(e) {
   ctx.closePath();
   ctx.rotate(-e.rot);
   const g = ctx.createRadialGradient(-R * 0.4, -R * 0.45, R * 0.05, 0, 0, R * 1.15);
-  g.addColorStop(0, e.flash > 0 ? '#fff1dc' : `hsl(${e.hue}, 20%, 52%)`);
-  g.addColorStop(1, `hsl(${e.hue}, 25%, 11%)`);
+  if (e.iron) {
+    g.addColorStop(0, e.flash > 0 ? '#ffffff' : '#b8c6dc'); g.addColorStop(0.45, '#56637a'); g.addColorStop(1, '#141a26');
+  } else {
+    g.addColorStop(0, e.flash > 0 ? '#fff1dc' : `hsl(${e.hue}, 20%, 52%)`);
+    g.addColorStop(1, `hsl(${e.hue}, 25%, 11%)`);
+  }
   ctx.fillStyle = g; ctx.fill();
-  ctx.strokeStyle = 'rgba(255, 220, 180, 0.14)'; ctx.lineWidth = 1; ctx.stroke();
+  if (e.iron) { ctx.strokeStyle = 'rgba(200, 225, 255, 0.55)'; ctx.lineWidth = 1.5; } else { ctx.strokeStyle = 'rgba(255, 220, 180, 0.14)'; ctx.lineWidth = 1; }
+  ctx.stroke();
   ctx.rotate(e.rot);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
   const c = e.craters;
@@ -2098,7 +2126,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // test hook (harmless in production)
-window.__starship = { G, ship, input, settings, cellAt, spawnPower, activatePower, startShower, spawnBirds };
+window.__starship = { G, ship, input, settings, cellAt, spawnPower, activatePower, startShower, spawnBirds, step: update };
 })();
 </script>
 </body>
