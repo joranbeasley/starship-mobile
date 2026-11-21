@@ -66,6 +66,7 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 }
 .icon-btn:focus-visible, .btn:focus-visible, .seg label:has(input:focus-visible), .toggle:has(input:focus-visible) { outline: 2px solid var(--ion); outline-offset: 2px; }
 .icon-btn svg { width: 18px; height: 18px; }
+.icon-btn.labeled { width: auto; display: flex; gap: 6px; padding: 0 11px; font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
 .speed.warn { color: var(--hazard); }
 .powers { display: flex; flex-wrap: wrap; gap: 4px; max-width: 60vw; }
 .chip {
@@ -192,8 +193,13 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
   </div>
   <div class="right">
     <div class="btns">
-      <button class="icon-btn" id="calBtn" aria-label="Set current tilt as neutral" title="Recalibrate tilt">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg>
+      <button class="icon-btn labeled" id="calBtn" aria-label="Level: make the way you hold the phone now the neutral tilt" title="Make the way you hold the phone now the neutral tilt">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <rect x="7" y="2.5" width="10" height="19" rx="2.5" transform="rotate(-14 12 12)"/>
+          <path d="M2.5 12h19" stroke-dasharray="2.2 2.2"/>
+          <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+        </svg>
+        <span>Level</span>
       </button>
       <button class="icon-btn" id="pauseBtn" aria-label="Pause" title="Pause">
         <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
@@ -257,7 +263,7 @@ p { margin: 0; line-height: 1.55; color: #c3c9e3; }
     <h2>Paused</h2>
     <div class="stack">
       <button class="btn" id="resumeBtn">Resume</button>
-      <button class="btn ghost" id="recalResumeBtn">Recalibrate and resume</button>
+      <button class="btn ghost" id="recalResumeBtn">Level and resume</button>
       <button class="btn ghost" id="quitBtn">Quit to title</button>
     </div>
     <div id="pauseSettingsSlot"></div>
@@ -2000,7 +2006,7 @@ function resume(recal) {
 }
 function recalibrate() {
   input.needCalib = true;
-  toast(input.mode === 'tilt' ? 'Neutral tilt set to how you are holding the phone now.' : 'Recentred.');
+  toast(input.mode === 'tilt' ? 'Leveled: the way you hold the phone now is neutral.' : 'Recentred.');
   if (input.mode !== 'tilt') { input.tx = input.ty = 0; }
 }
 function gameOver() {
