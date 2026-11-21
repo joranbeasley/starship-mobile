@@ -312,6 +312,9 @@ const SENS = { low: 42, med: 30, high: 20 };   // degrees of tilt for full defle
 // World axes: x right, y up, z forward at the start heading. The ship flies freely; the
 // camera rides behind and above it, sharing its heading.
 const SHIP_R = 0.55, CAM_BACK = 3.6, CAM_UP = 0.95, FOG = 125, TURN = 1.5;
+// Open space: a steady cruise speed and a reticle AIM_D ahead on your path, drawn clear above the ship.
+// Shots lock on to an asteroid within LOCK_CONE (about 7°) of your heading.
+const OPEN_SPEED = 20, OPEN_CAM_UP = 0.95, AIM_D = 32, LOCK_CONE = 0.12;
 const cv = $('game'), ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1, F = 1, CX = 0, CY = 0;
 // Tunnel mode: the ship moves inside a box of half-size BX × BY and the camera follows it only partly.
@@ -375,7 +378,7 @@ function updateCamera() {
     cam.p = v3(ship.p.x * TUNNEL_FOLLOW, ship.p.y * TUNNEL_FOLLOW + CAM_UP, ship.p.z - CAM_BACK);
     cam.roll = 0;
   } else {
-    cam.p = addS(addS(ship.p, b.f, -CAM_BACK), b.u, CAM_UP);
+    cam.p = addS(addS(ship.p, b.f, -CAM_BACK), b.u, isPaper() ? CAM_UP : OPEN_CAM_UP);
     cam.roll = -ship.bank * (isPaper() ? 0.55 : 0.4);
   }
 }
@@ -726,7 +729,8 @@ function maintainWorld(dt) {
   const target = Math.min(120, 55 + (G.t || 0) * 0.8) + (G.event ? 50 : 0);
   let rocks = 0;
   for (const e of G.ents) if (e.k === 'rock') rocks++;
-  for (let i = 0; rocks + i < target && i < 4; i++) spawnRock(rand(70, 115), 1.25);
+  // most new asteroids appear near your heading so there is always something to aim at or dodge
+  for (let i = 0; rocks + i < target && i < 4; i++) spawnRock(rand(70, 115), Math.random() < 0.6 ? 0.45 : 1.25);
 }
 
 // ---------- effects ----------
@@ -754,12 +758,33 @@ function addScore(n, color = '#ffb547') {
 }
 
 // ---------- gameplay ----------
+// the asteroid closest to your heading, within the lock cone
+function updateTarget() {
+  const f = shipBasis().f;
+  let best = null, bestA = LOCK_CONE;
+  for (const e of G.ents) {
+    if (e.k !== 'rock' || e.dead) continue;
+    const rel = sub(e.p, ship.p), along = dot(rel, f);
+    if (along < 4 || along > 95) continue;
+    const ang = Math.max(0, len(addS(rel, f, -along)) - e.r * 0.6) / along;
+    if (ang < bestA) { bestA = ang; best = e; }
+  }
+  G.target = best;
+}
 function fire() {
-  const b = shipBasis();
+  const b = shipBasis(), v = G.speed + 80;
+  // twin bolts converge on the locked asteroid (leading it if it moves) or on the reticle
+  let aim = addS(ship.p, b.f, AIM_D);
+  const t = G.target;
+  if (t && !t.dead) {
+    const tFly = len(sub(t.p, ship.p)) / v;
+    aim = addS(t.p, t.v || v3(), tFly);
+  }
   for (const side of [-1, 1]) {
     const p = addS(addS(ship.p, b.r, side * 0.32), b.u, -0.05);
-    G.bolts.push({ k: 'bolt', p, prev: p, dir: b.f, v: G.speed + 80, life: 1.4 });
-    if (G.pw.blaster > 0) G.bolts.push({ k: 'bolt', p, prev: p, dir: norm(addS(b.f, b.r, side * 0.07)), v: G.speed + 80, life: 1.4 });
+    const dir = norm(sub(aim, p));
+    G.bolts.push({ k: 'bolt', p, prev: p, dir, v, life: 1.4 });
+    if (G.pw.blaster > 0) G.bolts.push({ k: 'bolt', p, prev: p, dir: norm(addS(dir, b.r, side * 0.07)), v, life: 1.4 });
   }
   sfx.fire();
 }
@@ -845,7 +870,8 @@ function moveShip(dt, steer) {
 
 function update(dt) {
   G.t += dt;
-  if (!isPaper()) G.speed = 16 + Math.min(34, G.t * 0.45);
+  if (isTunnel()) G.speed = 16 + Math.min(34, G.t * 0.45);
+  else if (!isPaper()) G.speed = OPEN_SPEED;
   G.dist += G.speed * dt * 0.5;
 
   readInput(dt);
@@ -860,6 +886,7 @@ function update(dt) {
   if ((T.repair -= dt) <= 0) { if (G.hull < 3) spawnRepair(); T.repair = rand(18, 26); }
 
   G.fireCd -= dt;
+  if (!isPaper()) updateTarget();
   if (!isPaper() && (input.firing || input.keys.f) && G.fireCd <= 0) { fire(); G.fireCd = G.pw.blaster > 0 ? 0.09 : 0.16; }
 
   for (const e of G.ents) {
@@ -896,7 +923,7 @@ function update(dt) {
     b.prev = b.p; b.p = addS(b.p, b.dir, b.v * dt); b.life -= dt;
     for (const e of G.ents) {
       if (e.k !== 'rock' || e.dead) continue;
-      if (segDist(b.prev, b.p, e.p) < e.r + 0.2) { b.dead = true; hitRock(e); break; }
+      if (segDist(b.prev, b.p, e.p) < e.r + 0.35) { b.dead = true; hitRock(e); break; }
     }
     if (b.life <= 0) b.dead = true;
   }
@@ -1421,6 +1448,33 @@ function drawShieldBubble(u) {
   ctx.strokeStyle = `rgba(160, 240, 255, ${0.45 + 0.25 * Math.sin(t * 5)})`; ctx.lineWidth = Math.max(1, u * 0.03);
   ctx.beginPath(); ctx.arc(0, 0, u * 1.25, 0, 6.283); ctx.stroke();
 }
+function drawReticle() {
+  if (isPaper() || G.state !== 'playing') return;
+  const f = shipBasis().f, a = proj(addS(ship.p, f, AIM_D)), near = proj(addS(ship.p, f, AIM_D * 0.45));
+  const t = G.target && !G.target.dead ? G.target : null;
+  const col = t ? '255, 181, 71' : '92, 225, 255';
+  ctx.lineWidth = 1.5;
+  if (near) { ctx.strokeStyle = `rgba(${col}, 0.35)`; ctx.beginPath(); ctx.arc(near[0], near[1], 5, 0, 6.283); ctx.stroke(); }
+  if (a) {
+    const r = 12;
+    ctx.strokeStyle = `rgba(${col}, 0.85)`;
+    ctx.beginPath(); ctx.arc(a[0], a[1], r, 0, 6.283);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(a[0] + dx * (r + 3), a[1] + dy * (r + 3)); ctx.lineTo(a[0] + dx * (r + 9), a[1] + dy * (r + 9)); }
+    ctx.stroke();
+    ctx.fillStyle = `rgba(${col}, 0.9)`; ctx.fillRect(a[0] - 1.5, a[1] - 1.5, 3, 3);
+  }
+  if (t) {
+    const q = proj(t.p);
+    if (q) {
+      const R = t.r * q[2] * 1.15 + 7, k = R * 0.5, spin = performance.now() / 600;
+      ctx.save(); ctx.translate(q[0], q[1]); ctx.rotate(Math.PI / 4 + Math.sin(spin) * 0.1);
+      ctx.strokeStyle = 'rgba(255, 181, 71, 0.95)'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { ctx.moveTo(sx * R, sy * (R - k)); ctx.lineTo(sx * R, sy * R); ctx.lineTo(sx * (R - k), sy * R); }
+      ctx.stroke(); ctx.restore();
+    }
+  }
+}
 function drawBanner() {
   const b = G.banner;
   if (!b) return;
@@ -1794,6 +1848,7 @@ function render() {
   if (G.state !== 'over') list.push([isPaper() ? key(ship.p) : CAM_BACK, { k: 'ship' }]);
   list.sort((a, b) => b[0] - a[0]);
   for (const [z, o] of list) if (z > 0.3) drawers[o.k](o);
+  drawReticle();
   ctx.restore();
   [shipSX, shipSY] = shipScreen();
 
