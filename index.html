@@ -765,8 +765,23 @@ function addScore(n, color = '#ffb547') {
 
 // ---------- gameplay ----------
 // the asteroid closest to your heading, within the lock cone
+const BOLT_HIT = 0.35, GUN_X = 0.32;
 function updateTarget() {
-  const f = shipBasis().f;
+  const b = shipBasis(), f = b.f;
+  if (isTunnel()) {
+    // no aim assist in the tunnel: show the lock only when a straight shot from either gun would hit
+    let best = null, bestAlong = 95;
+    for (const e of G.ents) {
+      if (e.k !== 'rock' || e.dead) continue;
+      for (const side of [-1, 1]) {
+        const rel = sub(e.p, addS(ship.p, b.r, side * GUN_X)), along = dot(rel, f);
+        if (along < 2 || along > bestAlong) continue;
+        if (len(addS(rel, f, -along)) < e.r + BOLT_HIT) { bestAlong = along; best = e; }
+      }
+    }
+    G.target = best;
+    return;
+  }
   let best = null, bestA = LOCK_CONE;
   for (const e of G.ents) {
     if (e.k !== 'rock' || e.dead) continue;
@@ -782,13 +797,13 @@ function fire() {
   // twin bolts converge on the locked asteroid (leading it if it moves) or on the reticle
   let aim = addS(ship.p, b.f, AIM_D);
   const t = G.target;
-  if (t && !t.dead) {
+  if (t && !t.dead && !isTunnel()) {
     const tFly = len(sub(t.p, ship.p)) / v;
     aim = addS(t.p, t.v || v3(), tFly);
   }
   for (const side of [-1, 1]) {
-    const p = addS(addS(ship.p, b.r, side * 0.32), b.u, -0.05);
-    const dir = norm(sub(aim, p));
+    const p = addS(addS(ship.p, b.r, side * GUN_X), b.u, -0.05);
+    const dir = isTunnel() ? b.f : norm(sub(aim, p)); // tunnel: straight ahead from each gun
     G.bolts.push({ k: 'bolt', p, prev: p, dir, v, life: 1.4 });
     if (G.pw.blaster > 0) G.bolts.push({ k: 'bolt', p, prev: p, dir: norm(addS(dir, b.r, side * 0.07)), v, life: 1.4 });
   }
@@ -933,7 +948,7 @@ function update(dt) {
     b.prev = b.p; b.p = addS(b.p, b.dir, b.v * dt); b.life -= dt;
     for (const e of G.ents) {
       if (e.k !== 'rock' || e.dead) continue;
-      if (segDist(b.prev, b.p, e.p) < e.r + 0.35) { b.dead = true; hitRock(e); break; }
+      if (segDist(b.prev, b.p, e.p) < e.r + BOLT_HIT) { b.dead = true; hitRock(e); break; }
     }
     if (b.life <= 0) b.dead = true;
   }
