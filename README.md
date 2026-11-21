@@ -8,7 +8,7 @@ A spaceship flying game for phones, steered by tilting the device. It is a singl
 
 Pick one of three modes on the title screen. Each mode keeps its own best score.
 
-- **Tunnel run:** fly down an asteroid tunnel. Tilt sets where the ship sits inside it: tilt left and right to slide sideways, tip the top edge away from you to rise and back toward you to drop. Rings come straight at you. Shots fly straight ahead from your two guns with no aim assist; the reticle turns amber and the asteroid gets a lock bracket only when a straight shot would hit it.
+- **Tunnel run:** fly down an asteroid tunnel. Tilt sets where the ship sits inside it: tilt left and right to slide sideways, tip the top edge away from you to rise and back toward you to drop. Rings come straight at you. Shots fly straight ahead from your two guns, which sit close together, and fade out after a short range, with no aim assist; the reticle turns amber and the asteroid gets a lock bracket only when a straight shot would hit it.
 - **Open space:** no walls, and you can turn all the way around. Tilt left and right to turn, tip the top edge away to climb and back to dive. Hold a tilt to keep turning and return to neutral to fly straight; the nose eases back to level on its own. One ring at a time appears ahead, and an arrow at the screen edge points to it with the distance when it is off screen. The ship cruises at a steady speed. The reticle above the ship marks where your path and your shots go; when an asteroid is near it, the reticle turns amber, the asteroid gets a lock bracket, and your shots aim at it.
 
 - **Paper plane:** glide through an endless city at dusk. There is no engine: diving builds speed, pulling up (tip the top edge away) trades that speed for height, and if you get too slow the plane stalls and drops its nose. Tilt left and right to bank and turn; tight turns sink unless you pull up as well. Warm air rises from rooftop vents (the shimmering columns), so fly through one to gain height, and each hoop you thread gives a gust of speed. Hitting a building or the street crumples the plane; after three crumples the run ends. The HUD shows altitude, airspeed, and warns you when you stall or ride an updraft.
@@ -16,7 +16,7 @@ Pick one of three modes on the title screen. Each mode keeps its own best score.
 In all modes (firing is only in the space modes):
 
 - When you press Launch, the way you are holding the phone becomes "neutral". The *Level* button (top right) resets neutral to your current grip, and rotating the screen resets it too.
-- **Hold a finger on the screen to fire** twin lasers. Large asteroids take two hits. Your guns heat up as you fire (the ring around the reticle); hold fire for a couple of seconds and they overheat and lock until they cool. Gunmetal *iron* asteroids can't be shot apart, so steer around them.
+- **Hold a finger on the screen to fire** twin lasers. Large asteroids take two hits. Your guns heat up as you fire (the ring around the reticle); hold fire for a couple of seconds and they overheat and lock until they cool.
 - Each ring threaded in a row raises your score multiplier, up to ×6. Missing a ring or taking a hit resets it. In the space modes, every ring also gives a burst of speed that bleeds off over a couple of seconds, and longer ring chains give bigger bursts.
 - Collect amber crystals for points and green repair kits to restore hull.
 - Red corner brackets mark asteroids that will hit you within about 1.6 seconds if you hold your course.
